@@ -34,13 +34,8 @@ builder.Services.AddAuthentication(options =>
     };
 });
 
-// Configure DinkToPdf - Load native library
-var wkHtmlToPdfPath = Path.Combine(builder.Environment.ContentRootPath, "libwkhtmltox");
-CustomAssemblyLoadContext context = new CustomAssemblyLoadContext();
-context.LoadUnmanagedLibrary(Path.Combine(wkHtmlToPdfPath, "libwkhtmltox.dll"));
-
-// Register DinkToPdf Converter
-builder.Services.AddSingleton(typeof(DinkToPdf.Contracts.IConverter), new DinkToPdf.SynchronizedConverter(new DinkToPdf.PdfTools()));
+// Configure QuestPDF License (Community License - free for non-commercial use)
+QuestPDF.Settings.License = QuestPDF.Infrastructure.LicenseType.Community;
 
 // Register Services
 builder.Services.AddScoped<RoleSeederService>();

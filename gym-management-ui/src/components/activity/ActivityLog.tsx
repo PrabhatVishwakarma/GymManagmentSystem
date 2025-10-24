@@ -160,7 +160,8 @@ const ActivityLog: React.FC = () => {
   };
 
   const formatDate = (dateString: string) => {
-    const date = new Date(dateString);
+    // The backend sends UTC time, so we need to parse it correctly
+    const date = new Date(dateString + (dateString.includes('Z') ? '' : 'Z')); // Ensure UTC parsing
     const now = new Date();
     const diffMs = now.getTime() - date.getTime();
     const diffMins = Math.floor(diffMs / 60000);
@@ -541,7 +542,7 @@ const ActivityLog: React.FC = () => {
                   )}
                 </div>
                 <div style={{ color: '#6B7280', fontSize: '0.875rem' }}>
-                  {new Date(selectedActivity.createdAt).toLocaleString()}
+                  {new Date(selectedActivity.createdAt + (selectedActivity.createdAt.includes('Z') ? '' : 'Z')).toLocaleString()}
                 </div>
               </div>
 

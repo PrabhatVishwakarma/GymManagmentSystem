@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using GymManagmentSystem.Data;
 using GymManagmentSystem.Models;
 using GymManagmentSystem.Services;
+using System.Security.Claims;
 
 namespace GymManagmentSystem.Controllers
 {
@@ -19,6 +20,13 @@ namespace GymManagmentSystem.Controllers
         {
             _context = context;
             _pdfService = pdfService;
+        }
+
+        private string GetCurrentUserName()
+        {
+            var firstName = User.FindFirst("FirstName")?.Value ?? "";
+            var lastName = User.FindFirst("LastName")?.Value ?? "";
+            return $"{firstName} {lastName}".Trim();
         }
 
         // GET: api/PaymentReceipt/member/{membershipId}
@@ -58,22 +66,72 @@ namespace GymManagmentSystem.Controllers
                 return NotFound();
             }
 
+            var userName = GetCurrentUserName();
+
             try
             {
+                Console.WriteLine($"Attempting to generate PDF for receipt {receipt.ReceiptNumber}");
+                
                 // Generate PDF from receipt
                 var pdfBytes = _pdfService.GenerateReceiptPdf(receipt);
+                
+                Console.WriteLine($"PDF generated successfully! Size: {pdfBytes.Length} bytes");
+                
+                // Log download activity
+                var activity = new Activity
+                {
+                    ActivityType = "ReceiptDownloaded",
+                    Description = $"Downloaded payment receipt {receipt.ReceiptNumber} for {receipt.MemberName} (₹{receipt.AmountPaid:N2})",
+                    EntityType = "PaymentReceipt",
+                    EntityId = receipt.PaymentReceiptId,
+                    PerformedBy = userName,
+                    CreatedAt = DateTime.UtcNow,
+                    IsSuccessful = true,
+                    MessageContent = $"Format: PDF, Amount: ₹{receipt.AmountPaid:N2}",
+                    RecipientName = receipt.MemberName,
+                    RecipientContact = receipt.MemberEmail
+                };
+                _context.Activities.Add(activity);
+                await _context.SaveChangesAsync();
+                
                 return File(pdfBytes, "application/pdf", $"Receipt_{receipt.ReceiptNumber}.pdf");
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"PDF generation failed: {ex.Message}");
+                Console.WriteLine($"❌ PDF generation failed!");
+                Console.WriteLine($"Error: {ex.Message}");
+                Console.WriteLine($"Stack: {ex.StackTrace}");
+                
+                if (ex.InnerException != null)
+                {
+                    Console.WriteLine($"Inner Error: {ex.InnerException.Message}");
+                }
                 
                 // Fallback to HTML if PDF generation fails
+                Console.WriteLine("Falling back to HTML download...");
                 var htmlContent = receipt.HtmlContent;
                 if (string.IsNullOrEmpty(htmlContent))
                 {
                     htmlContent = _pdfService.GenerateReceiptHtmlContent(receipt);
                 }
+                
+                // Log download activity (HTML fallback)
+                var activity = new Activity
+                {
+                    ActivityType = "ReceiptDownloaded",
+                    Description = $"Downloaded payment receipt {receipt.ReceiptNumber} for {receipt.MemberName} (₹{receipt.AmountPaid:N2}) - HTML fallback",
+                    EntityType = "PaymentReceipt",
+                    EntityId = receipt.PaymentReceiptId,
+                    PerformedBy = userName,
+                    CreatedAt = DateTime.UtcNow,
+                    IsSuccessful = true,
+                    MessageContent = $"Format: HTML (PDF generation failed), Amount: ₹{receipt.AmountPaid:N2}",
+                    RecipientName = receipt.MemberName,
+                    RecipientContact = receipt.MemberEmail,
+                    ErrorMessage = ex.Message
+                };
+                _context.Activities.Add(activity);
+                await _context.SaveChangesAsync();
                 
                 var htmlBytes = System.Text.Encoding.UTF8.GetBytes(htmlContent);
                 return File(htmlBytes, "text/html", $"Receipt_{receipt.ReceiptNumber}.html");
@@ -91,6 +149,8 @@ namespace GymManagmentSystem.Controllers
                 return NotFound();
             }
 
+            var userName = GetCurrentUserName();
+
             // Use stored HTML content if available, otherwise generate it
             var htmlContent = receipt.HtmlContent;
             if (string.IsNullOrEmpty(htmlContent))
@@ -102,6 +162,23 @@ namespace GymManagmentSystem.Controllers
                 _context.PaymentReceipts.Update(receipt);
                 await _context.SaveChangesAsync();
             }
+            
+            // Log view activity
+            var activity = new Activity
+            {
+                ActivityType = "ReceiptViewed",
+                Description = $"Viewed payment receipt {receipt.ReceiptNumber} for {receipt.MemberName} (₹{receipt.AmountPaid:N2})",
+                EntityType = "PaymentReceipt",
+                EntityId = receipt.PaymentReceiptId,
+                PerformedBy = userName,
+                CreatedAt = DateTime.UtcNow,
+                IsSuccessful = true,
+                MessageContent = $"Viewed in browser, Amount: ₹{receipt.AmountPaid:N2}",
+                RecipientName = receipt.MemberName,
+                RecipientContact = receipt.MemberEmail
+            };
+            _context.Activities.Add(activity);
+            await _context.SaveChangesAsync();
             
             return Content(htmlContent, "text/html");
         }

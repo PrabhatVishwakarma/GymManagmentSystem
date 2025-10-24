@@ -1,41 +1,137 @@
 using System.Text;
 using GymManagmentSystem.Models;
-using DinkToPdf;
-using DinkToPdf.Contracts;
+using QuestPDF.Fluent;
+using QuestPDF.Helpers;
+using QuestPDF.Infrastructure;
 
 namespace GymManagmentSystem.Services
 {
     public class PdfReceiptService
     {
-        private readonly IConverter _converter;
-
-        public PdfReceiptService(IConverter converter)
-        {
-            _converter = converter;
-        }
-
         public byte[] GenerateReceiptPdf(PaymentReceipt receipt)
         {
-            var htmlContent = GenerateReceiptHtmlContent(receipt);
-            
-            var doc = new HtmlToPdfDocument()
+            var document = Document.Create(container =>
             {
-                GlobalSettings = {
-                    ColorMode = ColorMode.Color,
-                    Orientation = Orientation.Portrait,
-                    PaperSize = PaperKind.A4,
-                    Margins = new MarginSettings() { Top = 10, Bottom = 10, Left = 10, Right = 10 }
-                },
-                Objects = {
-                    new ObjectSettings() {
-                        PagesCount = true,
-                        HtmlContent = htmlContent,
-                        WebSettings = { DefaultEncoding = "utf-8" }
-                    }
-                }
-            };
-            
-            return _converter.Convert(doc);
+                container.Page(page =>
+                {
+                    page.Size(PageSizes.A4);
+                    page.Margin(2, Unit.Centimetre);
+                    page.PageColor(Colors.White);
+                    page.DefaultTextStyle(x => x.FontSize(11));
+
+                    page.Header()
+                        .Height(100)
+                        .Background(Colors.Blue.Lighten3)
+                        .Padding(20)
+                        .Column(column =>
+                        {
+                            column.Item().Text("GYM MANAGEMENT SYSTEM")
+                                .FontSize(24).Bold().FontColor(Colors.White);
+                            column.Item().Text("Payment Receipt")
+                                .FontSize(16).FontColor(Colors.White);
+                        });
+
+                    page.Content()
+                        .Padding(20)
+                        .Column(column =>
+                        {
+                            // Receipt Number and Date
+                            column.Item().Row(row =>
+                            {
+                                row.RelativeItem().Column(col =>
+                                {
+                                    col.Item().Text($"Receipt #: {receipt.ReceiptNumber}").Bold().FontSize(14);
+                                    col.Item().Text($"Date: {receipt.PaymentDate:dd MMM yyyy}").FontSize(10);
+                                });
+                                row.RelativeItem().AlignRight().Column(col =>
+                                {
+                                    col.Item().Text($"Received By: {receipt.ReceivedBy}").FontSize(10);
+                                });
+                            });
+
+                            column.Item().PaddingVertical(10).LineHorizontal(1).LineColor(Colors.Grey.Medium);
+
+                            // Member Information
+                            column.Item().PaddingTop(15).Text("Member Information").Bold().FontSize(12);
+                            column.Item().PaddingTop(5).Column(col =>
+                            {
+                                col.Item().Text($"Name: {receipt.MemberName}");
+                                col.Item().Text($"Email: {receipt.MemberEmail}");
+                                col.Item().Text($"Phone: {receipt.MemberPhone}");
+                                col.Item().Text($"Plan: {receipt.PlanName}");
+                            });
+
+                            column.Item().PaddingVertical(10).LineHorizontal(1).LineColor(Colors.Grey.Medium);
+
+                            // Payment Details
+                            column.Item().PaddingTop(15).Text("Payment Details").Bold().FontSize(12);
+                            column.Item().PaddingTop(10).Table(table =>
+                            {
+                                table.ColumnsDefinition(columns =>
+                                {
+                                    columns.RelativeColumn(3);
+                                    columns.RelativeColumn(2);
+                                });
+
+                                // Header
+                                table.Header(header =>
+                                {
+                                    header.Cell().Background(Colors.Grey.Lighten2).Padding(5).Text("Description").Bold();
+                                    header.Cell().Background(Colors.Grey.Lighten2).Padding(5).AlignRight().Text("Amount").Bold();
+                                });
+
+                                // Rows
+                                table.Cell().Padding(5).Text("Total Membership Amount");
+                                table.Cell().Padding(5).AlignRight().Text($"₹{receipt.TotalAmount:N2}");
+
+                                table.Cell().Padding(5).Text("Previous Payments");
+                                table.Cell().Padding(5).AlignRight().Text($"₹{receipt.PreviousPaid:N2}");
+
+                                table.Cell().Background(Colors.Green.Lighten4).Padding(5).Text("Current Payment").Bold();
+                                table.Cell().Background(Colors.Green.Lighten4).Padding(5).AlignRight().Text($"₹{receipt.AmountPaid:N2}").Bold().FontSize(12);
+
+                                table.Cell().Padding(5).Text("Total Paid");
+                                table.Cell().Padding(5).AlignRight().Text($"₹{(receipt.PreviousPaid + receipt.AmountPaid):N2}");
+
+                                table.Cell().Background(Colors.Orange.Lighten4).Padding(5).Text("Remaining Balance").Bold();
+                                table.Cell().Background(Colors.Orange.Lighten4).Padding(5).AlignRight().Text($"₹{receipt.RemainingAmount:N2}").Bold();
+                            });
+
+                            // Payment Method
+                            column.Item().PaddingTop(15).Row(row =>
+                            {
+                                row.RelativeItem().Text($"Payment Method: {receipt.PaymentMethod}");
+                                if (!string.IsNullOrEmpty(receipt.TransactionId))
+                                {
+                                    row.RelativeItem().Text($"Transaction ID: {receipt.TransactionId}");
+                                }
+                            });
+
+                            // Notes
+                            if (!string.IsNullOrEmpty(receipt.Notes))
+                            {
+                                column.Item().PaddingTop(10).Text($"Notes: {receipt.Notes}").Italic();
+                            }
+
+                            // Thank you message
+                            column.Item().PaddingTop(30).AlignCenter().Text("Thank you for your payment!")
+                                .FontSize(12).Italic().FontColor(Colors.Blue.Medium);
+                        });
+
+                    page.Footer()
+                        .Height(50)
+                        .Background(Colors.Grey.Lighten3)
+                        .Padding(10)
+                        .AlignCenter()
+                        .Text(text =>
+                        {
+                            text.Span("Generated on: ");
+                            text.Span(DateTime.Now.ToString("dd MMM yyyy HH:mm")).Bold();
+                        });
+                });
+            });
+
+            return document.GeneratePdf();
         }
 
         public byte[] GenerateReceiptHtml(PaymentReceipt receipt)

@@ -284,8 +284,8 @@ const Enquiries: React.FC = () => {
                     <td>{enquiry.city}</td>
                     <td>
                       {activeTab === 'open' 
-                        ? new Date(enquiry.createdAt).toLocaleDateString()
-                        : new Date(enquiry.convertedDate!).toLocaleDateString()}
+                        ? new Date(enquiry.createdAt + (enquiry.createdAt.includes('Z') ? '' : 'Z')).toLocaleDateString()
+                        : new Date(enquiry.convertedDate! + (enquiry.convertedDate!.includes('Z') ? '' : 'Z')).toLocaleDateString()}
                     </td>
                     <td>
                       {enquiry.isConverted ? (

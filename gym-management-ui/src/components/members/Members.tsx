@@ -212,7 +212,7 @@ const Members: React.FC = () => {
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = `${receiptNumber}.html`;
+      link.download = `Receipt_${receiptNumber}.pdf`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
@@ -686,7 +686,7 @@ const Members: React.FC = () => {
                         {memberReceipts.map((receipt) => (
                           <tr key={receipt.paymentReceiptId}>
                             <td><strong>{receipt.receiptNumber}</strong></td>
-                            <td>{new Date(receipt.paymentDate).toLocaleString()}</td>
+                            <td>{new Date(receipt.paymentDate + (receipt.paymentDate.includes('Z') ? '' : 'Z')).toLocaleString()}</td>
                             <td><strong style={{ color: '#28a745' }}>${receipt.amountPaid.toFixed(2)}</strong></td>
                             <td>{receipt.paymentMethod || 'Cash'}</td>
                             <td>

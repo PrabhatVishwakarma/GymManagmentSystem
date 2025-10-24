@@ -168,7 +168,8 @@ const SalesReports: React.FC = () => {
   };
 
   const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString();
+    // Ensure proper UTC to local timezone conversion
+    return new Date(dateString + (dateString.includes('Z') ? '' : 'Z')).toLocaleDateString();
   };
 
   return (
