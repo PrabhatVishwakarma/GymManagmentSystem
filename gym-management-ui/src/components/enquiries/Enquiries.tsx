@@ -1,28 +1,54 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Edit, Trash2, UserCheck, Eye, Download } from 'lucide-react';
+import { Plus, Edit, Trash2, UserCheck, Download } from 'lucide-react';
 import { Enquiry } from '../../types/api';
 import { enquiryAPI, membershipPlanAPI } from '../../services/api';
+import SearchBar from '../common/SearchBar';
+import Pagination from '../common/Pagination';
 
 const Enquiries: React.FC = () => {
-  const [enquiries, setEnquiries] = useState<Enquiry[]>([]);
+  const [openEnquiries, setOpenEnquiries] = useState<Enquiry[]>([]);
+  const [closedEnquiries, setClosedEnquiries] = useState<Enquiry[]>([]);
+  const [filteredOpenEnquiries, setFilteredOpenEnquiries] = useState<Enquiry[]>([]);
+  const [filteredClosedEnquiries, setFilteredClosedEnquiries] = useState<Enquiry[]>([]);
+  const [paginatedEnquiries, setPaginatedEnquiries] = useState<Enquiry[]>([]);
   const [membershipPlans, setMembershipPlans] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [showConvertModal, setShowConvertModal] = useState(false);
   const [selectedEnquiry, setSelectedEnquiry] = useState<Enquiry | null>(null);
   const [formData, setFormData] = useState<Partial<Enquiry>>({});
+  const [activeTab, setActiveTab] = useState<'open' | 'closed'>('open');
+  
+  // Search and Pagination state
+  const [searchQuery, setSearchQuery] = useState<string>('');
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [itemsPerPage, setItemsPerPage] = useState<number>(25);
 
   useEffect(() => {
     fetchData();
   }, []);
 
+  // Apply search filter
+  useEffect(() => {
+    applySearch();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openEnquiries, closedEnquiries, searchQuery, activeTab]);
+
+  // Apply pagination
+  useEffect(() => {
+    applyPagination();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filteredOpenEnquiries, filteredClosedEnquiries, activeTab, currentPage, itemsPerPage]);
+
   const fetchData = async () => {
     try {
-      const [enquiriesData, plansData] = await Promise.all([
-        enquiryAPI.getAll(),
+      const [openData, closedData, plansData] = await Promise.all([
+        enquiryAPI.getOpen(),
+        enquiryAPI.getClosed(),
         membershipPlanAPI.getActive()
       ]);
-      setEnquiries(enquiriesData);
+      setOpenEnquiries(openData);
+      setClosedEnquiries(closedData);
       setMembershipPlans(plansData);
     } catch (error) {
       console.error('Error fetching data:', error);
@@ -30,6 +56,44 @@ const Enquiries: React.FC = () => {
       setLoading(false);
     }
   };
+
+  const applySearch = () => {
+    const filterEnquiries = (enquiries: Enquiry[]) => {
+      if (!searchQuery) return enquiries;
+      
+      const query = searchQuery.toLowerCase();
+      return enquiries.filter(e =>
+        `${e.firstName} ${e.lastName}`.toLowerCase().includes(query) ||
+        e.email?.toLowerCase().includes(query) ||
+        e.phone?.toLowerCase().includes(query) ||
+        e.address?.toLowerCase().includes(query)
+      );
+    };
+
+    setFilteredOpenEnquiries(filterEnquiries(openEnquiries));
+    setFilteredClosedEnquiries(filterEnquiries(closedEnquiries));
+    setCurrentPage(1); // Reset to first page when search changes
+  };
+
+  const applyPagination = () => {
+    const currentData = activeTab === 'open' ? filteredOpenEnquiries : filteredClosedEnquiries;
+    const startIndex = (currentPage - 1) * itemsPerPage;
+    const endIndex = startIndex + itemsPerPage;
+    setPaginatedEnquiries(currentData.slice(startIndex, endIndex));
+  };
+
+  const handlePageChange = (page: number) => {
+    setCurrentPage(page);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleItemsPerPageChange = (items: number) => {
+    setItemsPerPage(items);
+    setCurrentPage(1);
+  };
+
+  const getCurrentData = () => activeTab === 'open' ? filteredOpenEnquiries : filteredClosedEnquiries;
+  const totalPages = Math.ceil(getCurrentData().length / itemsPerPage);
 
   const handleCreate = () => {
     setFormData({});
@@ -66,8 +130,13 @@ const Enquiries: React.FC = () => {
       try {
         await enquiryAPI.delete(id);
         fetchData();
-      } catch (error) {
+      } catch (error: any) {
         console.error('Error deleting enquiry:', error);
+        if (error.response?.data?.message) {
+          alert(error.response.data.message);
+        } else {
+          alert('Failed to delete enquiry');
+        }
       }
     }
   };
@@ -84,8 +153,14 @@ const Enquiries: React.FC = () => {
       );
       setShowConvertModal(false);
       fetchData();
-    } catch (error) {
+      alert('Enquiry successfully converted to member!');
+    } catch (error: any) {
       console.error('Error converting to member:', error);
+      if (error.response?.data?.message) {
+        alert(error.response.data.message);
+      } else {
+        alert('Failed to convert enquiry to member');
+      }
     }
   };
 
@@ -110,6 +185,8 @@ const Enquiries: React.FC = () => {
     return <div className="loading">Loading enquiries...</div>;
   }
 
+  const enquiries = activeTab === 'open' ? openEnquiries : closedEnquiries;
+
   return (
     <div>
       <div className="header">
@@ -126,6 +203,63 @@ const Enquiries: React.FC = () => {
         </div>
       </div>
 
+      {/* Tabs */}
+      <div style={{ marginBottom: '1rem', borderBottom: '2px solid #e0e0e0' }}>
+        <div style={{ display: 'flex', gap: '1rem' }}>
+          <button
+            onClick={() => {
+              setActiveTab('open');
+              setCurrentPage(1);
+            }}
+            style={{
+              padding: '0.75rem 1.5rem',
+              background: activeTab === 'open' ? '#007bff' : 'transparent',
+              color: activeTab === 'open' ? 'white' : '#666',
+              border: 'none',
+              borderBottom: activeTab === 'open' ? '3px solid #007bff' : 'none',
+              cursor: 'pointer',
+              fontWeight: activeTab === 'open' ? 'bold' : 'normal',
+              fontSize: '1rem'
+            }}
+          >
+            Open Enquiries ({filteredOpenEnquiries.length}/{openEnquiries.length})
+          </button>
+          <button
+            onClick={() => {
+              setActiveTab('closed');
+              setCurrentPage(1);
+            }}
+            style={{
+              padding: '0.75rem 1.5rem',
+              background: activeTab === 'closed' ? '#28a745' : 'transparent',
+              color: activeTab === 'closed' ? 'white' : '#666',
+              border: 'none',
+              borderBottom: activeTab === 'closed' ? '3px solid #28a745' : 'none',
+              cursor: 'pointer',
+              fontWeight: activeTab === 'closed' ? 'bold' : 'normal',
+              fontSize: '1rem'
+            }}
+          >
+            Closed Enquiries ({filteredClosedEnquiries.length}/{closedEnquiries.length})
+          </button>
+        </div>
+      </div>
+
+      {/* Search Bar */}
+      <div className="card" style={{ marginBottom: '1rem' }}>
+        <div className="card-body">
+          <SearchBar
+            value={searchQuery}
+            onChange={setSearchQuery}
+            placeholder="Search by name, email, phone, or address..."
+            onClear={() => setSearchQuery('')}
+          />
+          <div style={{ marginTop: '0.5rem', color: '#6B7280', fontSize: '0.875rem' }}>
+            Showing <strong>{getCurrentData().length}</strong> {activeTab} enquiries
+          </div>
+        </div>
+      </div>
+
       <div className="card">
         <div className="card-body">
           <div className="table-container">
@@ -136,34 +270,51 @@ const Enquiries: React.FC = () => {
                   <th>Email</th>
                   <th>Phone</th>
                   <th>City</th>
-                  <th>Created</th>
+                  <th>{activeTab === 'open' ? 'Created' : 'Converted'}</th>
+                  <th>Status</th>
                   <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {enquiries.map((enquiry) => (
+                {paginatedEnquiries.map((enquiry) => (
                   <tr key={enquiry.enquiryId}>
                     <td>{enquiry.firstName} {enquiry.lastName}</td>
                     <td>{enquiry.email}</td>
                     <td>{enquiry.phone}</td>
                     <td>{enquiry.city}</td>
-                    <td>{new Date(enquiry.createdAt).toLocaleDateString()}</td>
+                    <td>
+                      {activeTab === 'open' 
+                        ? new Date(enquiry.createdAt).toLocaleDateString()
+                        : new Date(enquiry.convertedDate!).toLocaleDateString()}
+                    </td>
+                    <td>
+                      {enquiry.isConverted ? (
+                        <span className="badge badge-success">Converted</span>
+                      ) : (
+                        <span className="badge badge-warning">Open</span>
+                      )}
+                    </td>
                     <td>
                       <div style={{ display: 'flex', gap: '0.5rem' }}>
-                        <button 
-                          className="btn btn-secondary"
-                          onClick={() => handleEdit(enquiry)}
-                          style={{ padding: '0.25rem 0.5rem' }}
-                        >
-                          <Edit size={16} />
-                        </button>
-                        <button 
-                          className="btn btn-success"
-                          onClick={() => handleConvert(enquiry)}
-                          style={{ padding: '0.25rem 0.5rem' }}
-                        >
-                          <UserCheck size={16} />
-                        </button>
+                        {!enquiry.isConverted && (
+                          <>
+                            <button 
+                              className="btn btn-secondary"
+                              onClick={() => handleEdit(enquiry)}
+                              style={{ padding: '0.25rem 0.5rem' }}
+                            >
+                              <Edit size={16} />
+                            </button>
+                            <button 
+                              className="btn btn-success"
+                              onClick={() => handleConvert(enquiry)}
+                              style={{ padding: '0.25rem 0.5rem' }}
+                              title="Convert to Member"
+                            >
+                              <UserCheck size={16} />
+                            </button>
+                          </>
+                        )}
                         <button 
                           className="btn btn-danger"
                           onClick={() => handleDelete(enquiry.enquiryId)}
@@ -178,6 +329,18 @@ const Enquiries: React.FC = () => {
               </tbody>
             </table>
           </div>
+          
+          {/* Pagination */}
+          {getCurrentData().length > 0 && (
+            <Pagination
+              currentPage={currentPage}
+              totalPages={totalPages}
+              totalItems={getCurrentData().length}
+              itemsPerPage={itemsPerPage}
+              onPageChange={handlePageChange}
+              onItemsPerPageChange={handleItemsPerPageChange}
+            />
+          )}
         </div>
       </div>
 

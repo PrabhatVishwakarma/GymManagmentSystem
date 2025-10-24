@@ -9,7 +9,9 @@ import {
   Settings,
   LogOut,
   Menu,
-  X
+  X,
+  TrendingUp,
+  Activity as ActivityIcon
 } from 'lucide-react';
 import { useState } from 'react';
 
@@ -33,6 +35,8 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     { path: '/enquiries', label: 'Enquiries', icon: Users },
     { path: '/membership-plans', label: 'Membership Plans', icon: CreditCard },
     { path: '/members', label: 'Members', icon: UserCheck },
+    { path: '/reports', label: 'Sales Reports', icon: TrendingUp },
+    { path: '/activity', label: 'Activity Log', icon: ActivityIcon },
     { path: '/users', label: 'Users', icon: Settings },
   ];
 

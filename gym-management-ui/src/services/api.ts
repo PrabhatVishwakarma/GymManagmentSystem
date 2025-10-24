@@ -52,6 +52,16 @@ export const enquiryAPI = {
     return response.data;
   },
 
+  getOpen: async (): Promise<Enquiry[]> => {
+    const response = await api.get('/Enquiry/Open');
+    return response.data;
+  },
+
+  getClosed: async (): Promise<Enquiry[]> => {
+    const response = await api.get('/Enquiry/Closed');
+    return response.data;
+  },
+
   getById: async (id: number): Promise<Enquiry> => {
     const response = await api.get(`/Enquiry/${id}`);
     return response.data;
@@ -148,6 +158,34 @@ export const membersMembershipAPI = {
     });
     return response.data;
   },
+
+  exportToExcel: async (): Promise<Blob> => {
+    const response = await api.get('/MembersMembership/ExportToExcel', {
+      responseType: 'blob'
+    });
+    return response.data;
+  },
+
+  upgrade: async (id: number, newMembershipPlanId: number, paidAmount: number, updatedBy: string): Promise<any> => {
+    const response = await api.put(`/MembersMembership/${id}/Upgrade`, {
+      newMembershipPlanId,
+      paidAmount,
+      updatedBy
+    });
+    return response.data;
+  },
+
+  toggleStatus: async (id: number, isInactive: boolean, updatedBy: string): Promise<any> => {
+    const response = await api.put(`/MembersMembership/${id}/ToggleStatus`, {
+      isInactive,
+      updatedBy
+    });
+    return response.data;
+  },
+
+  delete: async (id: number): Promise<void> => {
+    await api.delete(`/MembersMembership/${id}`);
+  },
 };
 
 // User API
@@ -169,6 +207,105 @@ export const userAPI = {
 
   delete: async (id: string): Promise<void> => {
     await api.delete(`/User/${id}`);
+  },
+};
+
+// Sales Reports API
+export const reportsAPI = {
+  getSalesLast3Months: async (): Promise<any[]> => {
+    const response = await api.get('/Reports/Sales/Last3Months');
+    return response.data;
+  },
+
+  getSalesLast6Months: async (): Promise<any[]> => {
+    const response = await api.get('/Reports/Sales/Last6Months');
+    return response.data;
+  },
+
+  getSalesByDateRange: async (startDate?: string, endDate?: string): Promise<any[]> => {
+    const params = new URLSearchParams();
+    if (startDate) params.append('startDate', startDate);
+    if (endDate) params.append('endDate', endDate);
+    
+    const response = await api.get(`/Reports/Sales?${params.toString()}`);
+    return response.data;
+  },
+
+  exportSalesToExcel: async (startDate?: string, endDate?: string): Promise<Blob> => {
+    const params = new URLSearchParams();
+    if (startDate) params.append('startDate', startDate);
+    if (endDate) params.append('endDate', endDate);
+    
+    const response = await api.get(`/Reports/Sales/ExportToExcel?${params.toString()}`, {
+      responseType: 'blob'
+    });
+    return response.data;
+  },
+};
+
+// Activity API
+export const activityAPI = {
+  getAll: async (limit?: number, activityType?: string, entityType?: string): Promise<any[]> => {
+    const params = new URLSearchParams();
+    if (limit) params.append('limit', limit.toString());
+    if (activityType) params.append('activityType', activityType);
+    if (entityType) params.append('entityType', entityType);
+    
+    const response = await api.get(`/Activity?${params.toString()}`);
+    return response.data;
+  },
+
+  getRecent: async (limit: number = 50): Promise<any[]> => {
+    const response = await api.get(`/Activity/Recent?limit=${limit}`);
+    return response.data;
+  },
+
+  getByEntity: async (entityType: string, entityId: number): Promise<any[]> => {
+    const response = await api.get(`/Activity/ByEntity/${entityType}/${entityId}`);
+    return response.data;
+  },
+
+  getStats: async (): Promise<any> => {
+    const response = await api.get('/Activity/Stats');
+    return response.data;
+  },
+};
+
+// Payment Receipts API
+export const paymentReceiptAPI = {
+  getByMember: async (membershipId: number): Promise<any[]> => {
+    const response = await api.get(`/PaymentReceipt/member/${membershipId}`);
+    return response.data;
+  },
+
+  getById: async (id: number): Promise<any> => {
+    const response = await api.get(`/PaymentReceipt/${id}`);
+    return response.data;
+  },
+
+  downloadReceipt: async (id: number): Promise<Blob> => {
+    const response = await api.get(`/PaymentReceipt/${id}/download`, {
+      responseType: 'blob'
+    });
+    return response.data;
+  },
+
+  viewReceiptHtml: async (id: number): Promise<string> => {
+    const response = await api.get(`/PaymentReceipt/${id}/html`, {
+      headers: {
+        'Accept': 'text/html'
+      }
+    });
+    return response.data;
+  },
+
+  getAll: async (): Promise<any[]> => {
+    const response = await api.get('/PaymentReceipt/all');
+    return response.data;
+  },
+
+  delete: async (id: number): Promise<void> => {
+    await api.delete(`/PaymentReceipt/${id}`);
   },
 };
 

@@ -12,6 +12,8 @@ namespace GymManagmentSystem.Data
         public DbSet<EnquiryHistory> EnquiryHistories { get; set; }
         public DbSet<MembershipPlan> MembershipPlans { get; set; }
         public DbSet<MembersMembership> MembersMemberships { get; set; }
+        public DbSet<Activity> Activities { get; set; }
+        public DbSet<PaymentReceipt> PaymentReceipts { get; set; }
 
         protected override void OnModelCreating(ModelBuilder builder)
         {
@@ -49,6 +51,15 @@ namespace GymManagmentSystem.Data
             builder.Entity<MembershipPlan>()
                 .Property(m => m.Price)
                 .HasPrecision(18, 2);
+
+            // Add unique constraints for Enquiry email and phone
+            builder.Entity<Enquiry>()
+                .HasIndex(e => e.Email)
+                .IsUnique();
+
+            builder.Entity<Enquiry>()
+                .HasIndex(e => e.Phone)
+                .IsUnique();
         }
     }
 }

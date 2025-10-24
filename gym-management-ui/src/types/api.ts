@@ -48,6 +48,8 @@ export interface Enquiry {
   gender: string;
   dateOfBirth: string;
   occupation: string;
+  isConverted: boolean;
+  convertedDate?: string;
   createdby: string;
   createdAt: string;
   updatedBy: string;
@@ -77,6 +79,7 @@ export interface MembersMembership {
   paidAmount: number;
   remainingAmount: number;
   nextPaymentDueDate: string;
+  isInactive?: boolean;
   isActive: boolean;
   createdBy: string;
   createdAt: string;

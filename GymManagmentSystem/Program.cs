@@ -34,8 +34,18 @@ builder.Services.AddAuthentication(options =>
     };
 });
 
-// Register Role Seeder Service
+// Configure DinkToPdf - Load native library
+var wkHtmlToPdfPath = Path.Combine(builder.Environment.ContentRootPath, "libwkhtmltox");
+CustomAssemblyLoadContext context = new CustomAssemblyLoadContext();
+context.LoadUnmanagedLibrary(Path.Combine(wkHtmlToPdfPath, "libwkhtmltox.dll"));
+
+// Register DinkToPdf Converter
+builder.Services.AddSingleton(typeof(DinkToPdf.Contracts.IConverter), new DinkToPdf.SynchronizedConverter(new DinkToPdf.PdfTools()));
+
+// Register Services
 builder.Services.AddScoped<RoleSeederService>();
+builder.Services.AddScoped<NotificationService>();
+builder.Services.AddScoped<PdfReceiptService>();
 
 // Add CORS - Read allowed origins from configuration
 var allowedOrigins = builder.Configuration.GetSection("CORS:AllowedOrigins").Get<string[]>() 

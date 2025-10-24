@@ -8,6 +8,8 @@ import Enquiries from './components/enquiries/Enquiries';
 import MembershipPlans from './components/membership/MembershipPlans';
 import Members from './components/members/Members';
 import Users from './components/users/Users';
+import SalesReports from './components/reports/SalesReports';
+import ActivityLog from './components/activity/ActivityLog';
 import Layout from './components/layout/Layout';
 import './App.css';
 
@@ -66,6 +68,22 @@ const AppRoutes: React.FC = () => {
         <ProtectedRoute>
           <Layout>
             <Users />
+          </Layout>
+        </ProtectedRoute>
+      } />
+      
+      <Route path="/reports" element={
+        <ProtectedRoute>
+          <Layout>
+            <SalesReports />
+          </Layout>
+        </ProtectedRoute>
+      } />
+      
+      <Route path="/activity" element={
+        <ProtectedRoute>
+          <Layout>
+            <ActivityLog />
           </Layout>
         </ProtectedRoute>
       } />

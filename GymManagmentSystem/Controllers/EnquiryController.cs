@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using GymManagmentSystem.Data;
 using GymManagmentSystem.Models;
 using GymManagmentSystem.Models.Enums;
+using GymManagmentSystem.Services;
 using OfficeOpenXml;
 
 namespace GymManagmentSystem.Controllers
@@ -12,10 +13,14 @@ namespace GymManagmentSystem.Controllers
     public class EnquiryController : ControllerBase
     {
         private readonly AppDbContext _context;
+        private readonly NotificationService _notificationService;
+        private readonly PdfReceiptService _pdfService;
 
-        public EnquiryController(AppDbContext context)
+        public EnquiryController(AppDbContext context, NotificationService notificationService, PdfReceiptService pdfService)
         {
             _context = context;
+            _notificationService = notificationService;
+            _pdfService = pdfService;
         }
 
         // GET: api/Enquiry
@@ -23,6 +28,26 @@ namespace GymManagmentSystem.Controllers
         public async Task<ActionResult<IEnumerable<Enquiry>>> GetEnquiries()
         {
             return await _context.Enquiries.ToListAsync();
+        }
+
+        // GET: api/Enquiry/Open
+        [HttpGet("Open")]
+        public async Task<ActionResult<IEnumerable<Enquiry>>> GetOpenEnquiries()
+        {
+            return await _context.Enquiries
+                .Where(e => !e.IsConverted)
+                .OrderByDescending(e => e.CreatedAt)
+                .ToListAsync();
+        }
+
+        // GET: api/Enquiry/Closed
+        [HttpGet("Closed")]
+        public async Task<ActionResult<IEnumerable<Enquiry>>> GetClosedEnquiries()
+        {
+            return await _context.Enquiries
+                .Where(e => e.IsConverted)
+                .OrderByDescending(e => e.ConvertedDate)
+                .ToListAsync();
         }
 
         // GET: api/Enquiry/5
@@ -43,11 +68,32 @@ namespace GymManagmentSystem.Controllers
         [HttpPost]
         public async Task<ActionResult<Enquiry>> PostEnquiry(Enquiry enquiry)
         {
+            // Check for duplicate email
+            if (await _context.Enquiries.AnyAsync(e => e.Email == enquiry.Email))
+            {
+                return BadRequest(new { message = $"Email '{enquiry.Email}' is already registered" });
+            }
+
+            // Check for duplicate phone
+            if (await _context.Enquiries.AnyAsync(e => e.Phone == enquiry.Phone))
+            {
+                return BadRequest(new { message = $"Phone number '{enquiry.Phone}' is already registered" });
+            }
+
             enquiry.CreatedAt = DateTime.UtcNow;
             enquiry.UpdatedAt = DateTime.UtcNow;
             
             _context.Enquiries.Add(enquiry);
-            await _context.SaveChangesAsync();
+            
+            try
+            {
+                await _context.SaveChangesAsync();
+            }
+            catch (DbUpdateException)
+            {
+                // Handle unique constraint violation
+                return BadRequest(new { message = "This email or phone number is already in use" });
+            }
 
             // Create history record
             await CreateEnquiryHistory(enquiry, EnquiryAction.Created);
@@ -62,6 +108,18 @@ namespace GymManagmentSystem.Controllers
             if (id != enquiry.EnquiryId)
             {
                 return BadRequest();
+            }
+
+            // Check for duplicate email (excluding current record)
+            if (await _context.Enquiries.AnyAsync(e => e.Email == enquiry.Email && e.EnquiryId != id))
+            {
+                return BadRequest(new { message = $"Email '{enquiry.Email}' is already registered" });
+            }
+
+            // Check for duplicate phone (excluding current record)
+            if (await _context.Enquiries.AnyAsync(e => e.Phone == enquiry.Phone && e.EnquiryId != id))
+            {
+                return BadRequest(new { message = $"Phone number '{enquiry.Phone}' is already registered" });
             }
 
             enquiry.UpdatedAt = DateTime.UtcNow;
@@ -84,6 +142,10 @@ namespace GymManagmentSystem.Controllers
                 {
                     throw;
                 }
+            }
+            catch (DbUpdateException)
+            {
+                return BadRequest(new { message = "This email or phone number is already in use" });
             }
 
             return NoContent();
@@ -129,6 +191,20 @@ namespace GymManagmentSystem.Controllers
                 return NotFound("Enquiry not found");
             }
 
+            // Check if enquiry is already converted
+            if (enquiry.IsConverted)
+            {
+                return BadRequest(new { message = "This enquiry has already been converted to a member" });
+            }
+
+            // Check if enquiry already has an active membership
+            var existingMembership = await _context.MembersMemberships
+                .AnyAsync(m => m.EnquiryId == id);
+            if (existingMembership)
+            {
+                return BadRequest(new { message = "This enquiry already has a membership" });
+            }
+
             var membershipPlan = await _context.MembershipPlans.FindAsync(request.MembershipPlanId);
             if (membershipPlan == null)
             {
@@ -149,10 +225,135 @@ namespace GymManagmentSystem.Controllers
 
             _context.MembersMemberships.Add(membersMembership);
             
+            // Mark enquiry as converted
+            enquiry.IsConverted = true;
+            enquiry.ConvertedDate = DateTime.UtcNow;
+            enquiry.UpdatedAt = DateTime.UtcNow;
+            enquiry.UpdatedBy = request.CreatedBy;
+            
             // Update enquiry history
             await CreateEnquiryHistory(enquiry, EnquiryAction.MembershipTaken, DateTime.UtcNow);
 
             await _context.SaveChangesAsync();
+
+            // Send welcome email and WhatsApp greeting
+            var memberName = $"{enquiry.FirstName} {enquiry.LastName}";
+            var endDate = membersMembership.StartDate.AddMonths(membershipPlan.DurationInMonths);
+            
+            // Log conversion activity
+            var conversionActivity = new Activity
+            {
+                ActivityType = "EnquiryConverted",
+                Description = $"Enquiry converted to member: {memberName}",
+                EntityType = "Enquiry",
+                EntityId = enquiry.EnquiryId,
+                RecipientName = memberName,
+                RecipientContact = enquiry.Email,
+                MessageContent = $"Membership Plan: {membershipPlan.PlanName}, Duration: {membershipPlan.DurationInMonths} months, Total Amount: ${membershipPlan.Price:N2}",
+                IsSuccessful = true,
+                PerformedBy = request.CreatedBy ?? "System",
+                CreatedAt = DateTime.UtcNow
+            };
+            _context.Activities.Add(conversionActivity);
+            
+            // Create payment receipt for initial payment if any amount was paid
+            PaymentReceipt receipt = null;
+            if (request.PaidAmount > 0)
+            {
+                var receiptCount = await _context.PaymentReceipts.CountAsync();
+                var receiptNumber = $"REC-{DateTime.UtcNow:yyyy}-{(receiptCount + 1):D5}";
+
+                receipt = new PaymentReceipt
+                {
+                    ReceiptNumber = receiptNumber,
+                    MembersMembershipId = membersMembership.MembersMembershipId,
+                    AmountPaid = request.PaidAmount,
+                    PaymentMethod = "Cash",
+                    TransactionId = null,
+                    TotalAmount = membershipPlan.Price,
+                    PreviousPaid = 0,
+                    RemainingAmount = membersMembership.RemainingAmount,
+                    Notes = "Initial membership payment",
+                    PaymentDate = DateTime.UtcNow,
+                    ReceivedBy = request.CreatedBy ?? "Admin",
+                    MemberName = memberName,
+                    MemberEmail = enquiry.Email,
+                    MemberPhone = enquiry.Phone,
+                    PlanName = membershipPlan.PlanName,
+                    CreatedAt = DateTime.UtcNow,
+                    EmailSent = false
+                };
+                _context.PaymentReceipts.Add(receipt);
+                
+                // Must save to get the PaymentReceiptId before generating HTML
+                await _context.SaveChangesAsync();
+                
+                // Generate and save HTML content to database
+                receipt.HtmlContent = _pdfService.GenerateReceiptHtmlContent(receipt);
+                _context.PaymentReceipts.Update(receipt);
+                
+                // Log initial payment activity
+                var paymentActivity = new Activity
+                {
+                    ActivityType = "PaymentReceived",
+                    Description = $"Initial payment of ${request.PaidAmount:N2} received from {memberName}",
+                    EntityType = "Member",
+                    EntityId = membersMembership.MembersMembershipId,
+                    RecipientName = memberName,
+                    RecipientContact = enquiry.Email,
+                    MessageContent = $"Receipt: {receiptNumber}, Initial Payment: ${request.PaidAmount:N2}, Total Amount: ${membershipPlan.Price:N2}, Remaining: ${membersMembership.RemainingAmount:N2}, Method: Cash",
+                    IsSuccessful = true,
+                    PerformedBy = request.CreatedBy ?? "System",
+                    CreatedAt = DateTime.UtcNow
+                };
+                _context.Activities.Add(paymentActivity);
+            }
+            
+            await _context.SaveChangesAsync();
+            
+            // Send notifications (async, don't wait - don't block response)
+            _ = Task.Run(async () =>
+            {
+                await _notificationService.SendWelcomeEmailAsync(
+                    enquiry.Email,
+                    memberName,
+                    membershipPlan.PlanName,
+                    request.PaidAmount,
+                    membersMembership.StartDate,
+                    endDate
+                );
+                
+                await _notificationService.SendWhatsAppGreetingAsync(
+                    enquiry.Phone,
+                    memberName,
+                    membershipPlan.PlanName
+                );
+                
+                // Send payment receipt email if payment was made
+                if (receipt != null)
+                {
+                    try
+                    {
+                        var htmlContent = _pdfService.GenerateReceiptHtmlContent(receipt);
+                        await _notificationService.SendPaymentReceiptAsync(
+                            receipt.MemberEmail,
+                            receipt.MemberName,
+                            receipt.ReceiptNumber,
+                            receipt.AmountPaid,
+                            htmlContent
+                        );
+                        
+                        // Update receipt to mark email as sent
+                        receipt.EmailSent = true;
+                        receipt.EmailSentAt = DateTime.UtcNow;
+                        await _context.SaveChangesAsync();
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Failed to send receipt email: {ex.Message}");
+                    }
+                }
+            });
 
             return CreatedAtAction("GetMembersMembership", "MembersMembership", 
                 new { id = membersMembership.MembersMembershipId }, membersMembership);

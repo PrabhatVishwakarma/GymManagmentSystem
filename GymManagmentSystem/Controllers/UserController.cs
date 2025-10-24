@@ -60,40 +60,65 @@ namespace GymManagmentSystem.Controllers
         [HttpPost("Register")]
         public async Task<ActionResult<User>> RegisterUser([FromBody] RegisterUserRequest request)
         {
-            if (!ModelState.IsValid)
+            try
             {
-                return BadRequest(ModelState);
-            }
-
-            var user = new User
-            {
-                UserName = request.Email,
-                Email = request.Email,
-                FirstName = request.FirstName,
-                LastName = request.LastName,
-                Gender = request.Gender,
-                Address = request.Address,
-                DateOfBirth = request.DateOfBirth,
-                Occupation = request.Occupation,
-                CreatedBy = request.CreatedBy,
-                CreatedAt = DateTime.UtcNow,
-                UpdatedAt = DateTime.UtcNow
-            };
-
-            var result = await _userManager.CreateAsync(user, request.Password);
-
-            if (result.Succeeded)
-            {
-                // Add to role if specified
-                if (!string.IsNullOrEmpty(request.Role))
+                if (!ModelState.IsValid)
                 {
-                    await _userManager.AddToRoleAsync(user, request.Role);
+                    return BadRequest(ModelState);
                 }
 
-                return CreatedAtAction("GetUser", new { id = user.Id }, user);
-            }
+                // Parse date if it's a string
+                DateTime dateOfBirth;
+                if (request.DateOfBirth.HasValue)
+                {
+                    dateOfBirth = request.DateOfBirth.Value;
+                }
+                else if (!string.IsNullOrEmpty(request.DateOfBirthString))
+                {
+                    if (!DateTime.TryParse(request.DateOfBirthString, out dateOfBirth))
+                    {
+                        return BadRequest(new { message = "Invalid date format for DateOfBirth" });
+                    }
+                }
+                else
+                {
+                    return BadRequest(new { message = "DateOfBirth is required" });
+                }
 
-            return BadRequest(result.Errors);
+                var user = new User
+                {
+                    UserName = request.Email,
+                    Email = request.Email,
+                    FirstName = request.FirstName,
+                    LastName = request.LastName,
+                    Gender = request.Gender,
+                    Address = request.Address,
+                    DateOfBirth = dateOfBirth,
+                    Occupation = request.Occupation,
+                    CreatedBy = request.CreatedBy ?? "System",
+                    CreatedAt = DateTime.UtcNow,
+                    UpdatedAt = DateTime.UtcNow
+                };
+
+                var result = await _userManager.CreateAsync(user, request.Password);
+
+                if (result.Succeeded)
+                {
+                    // Add to role if specified
+                    if (!string.IsNullOrEmpty(request.Role))
+                    {
+                        await _userManager.AddToRoleAsync(user, request.Role);
+                    }
+
+                    return CreatedAtAction("GetUser", new { id = user.Id }, user);
+                }
+
+                return BadRequest(new { errors = result.Errors, message = "User creation failed" });
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new { message = ex.Message, innerMessage = ex.InnerException?.Message });
+            }
         }
 
         // PUT: api/User/5
@@ -292,7 +317,8 @@ namespace GymManagmentSystem.Controllers
         public string LastName { get; set; }
         public string Gender { get; set; }
         public string Address { get; set; }
-        public DateTime DateOfBirth { get; set; }
+        public DateTime? DateOfBirth { get; set; }
+        public string DateOfBirthString { get; set; }
         public string Occupation { get; set; }
         public string Role { get; set; }
         public string CreatedBy { get; set; }

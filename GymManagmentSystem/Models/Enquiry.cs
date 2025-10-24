@@ -40,6 +40,10 @@ namespace GymManagmentSystem.Models
         [StringLength(100)]
         public string Occupation { get; set; }
         
+        public bool IsConverted { get; set; } = false;
+        
+        public DateTime? ConvertedDate { get; set; }
+        
         [StringLength(100)]
         public string Createdby { get; set; }
         
