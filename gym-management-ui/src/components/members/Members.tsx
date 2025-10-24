@@ -19,6 +19,7 @@ const Members: React.FC = () => {
   
   // Search and Filter state
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const [activeTab, setActiveTab] = useState<string>('all'); // all, active, expiringSoon, expired, pendingPayments
   const [statusFilter, setStatusFilter] = useState<string>('all'); // all, active, inactive, expired
   const [paymentFilter, setPaymentFilter] = useState<string>('all'); // all, paid, pending
   const [planFilter, setPlanFilter] = useState<string>('all'); // all, or plan ID
@@ -30,13 +31,14 @@ const Members: React.FC = () => {
   useEffect(() => {
     fetchMembers();
     fetchMembershipPlans();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab]);
 
   // Apply filters and search
   useEffect(() => {
     applyFilters();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [members, searchQuery, statusFilter, paymentFilter, planFilter]);
+  }, [members, searchQuery, activeTab, statusFilter, paymentFilter, planFilter]);
 
   // Apply pagination
   useEffect(() => {
@@ -46,7 +48,24 @@ const Members: React.FC = () => {
 
   const fetchMembers = async () => {
     try {
-      const data = await membersMembershipAPI.getAll();
+      let data;
+      // Fetch based on active tab
+      switch (activeTab) {
+        case 'active':
+          data = await membersMembershipAPI.getActive();
+          break;
+        case 'expiringSoon':
+          data = await membersMembershipAPI.getExpiringSoon();
+          break;
+        case 'expired':
+          data = await membersMembershipAPI.getExpired();
+          break;
+        case 'pendingPayments':
+          data = await membersMembershipAPI.getPendingPayments();
+          break;
+        default:
+          data = await membersMembershipAPI.getAll();
+      }
       setMembers(data);
     } catch (error) {
       console.error('Error fetching members:', error);
@@ -297,6 +316,45 @@ const Members: React.FC = () => {
           <Download size={20} style={{ marginRight: '0.5rem' }} />
           Export to Excel
         </button>
+      </div>
+
+      {/* Tabs */}
+      <div style={{ 
+        borderBottom: '2px solid #E5E7EB', 
+        marginBottom: '1.5rem',
+        display: 'flex',
+        gap: '2rem',
+        backgroundColor: 'white',
+        padding: '0 1rem'
+      }}>
+        {[
+          { id: 'all', label: 'All Members' },
+          { id: 'active', label: 'Active' },
+          { id: 'expiringSoon', label: 'Expiring Soon' },
+          { id: 'expired', label: 'Expired' },
+          { id: 'pendingPayments', label: 'Pending Payments' },
+        ].map((tab) => (
+          <button
+            key={tab.id}
+            onClick={() => {
+              setActiveTab(tab.id);
+              setCurrentPage(1);
+            }}
+            style={{
+              padding: '0.75rem 1rem',
+              backgroundColor: 'transparent',
+              border: 'none',
+              borderBottom: activeTab === tab.id ? '2px solid #4F46E5' : '2px solid transparent',
+              color: activeTab === tab.id ? '#4F46E5' : '#6B7280',
+              fontWeight: activeTab === tab.id ? '600' : '500',
+              cursor: 'pointer',
+              transition: 'all 0.2s',
+              fontSize: '0.875rem',
+            }}
+          >
+            {tab.label}
+          </button>
+        ))}
       </div>
 
       {/* Search and Filters */}

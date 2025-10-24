@@ -10,7 +10,9 @@ import Members from './components/members/Members';
 import Users from './components/users/Users';
 import SalesReports from './components/reports/SalesReports';
 import ActivityLog from './components/activity/ActivityLog';
+import Profile from './components/profile/Profile';
 import Layout from './components/layout/Layout';
+import GlobalRetryNotification from './components/common/GlobalRetryNotification';
 import './App.css';
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -87,6 +89,14 @@ const AppRoutes: React.FC = () => {
           </Layout>
         </ProtectedRoute>
       } />
+      
+      <Route path="/profile" element={
+        <ProtectedRoute>
+          <Layout>
+            <Profile />
+          </Layout>
+        </ProtectedRoute>
+      } />
     </Routes>
   );
 };
@@ -96,6 +106,7 @@ function App() {
     <AuthProvider>
       <Router>
         <div className="App">
+          <GlobalRetryNotification />
           <AppRoutes />
         </div>
       </Router>

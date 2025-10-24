@@ -11,6 +11,7 @@ namespace GymManagmentSystem.Models
         public string Address { get; set; }
         public DateTime DateOfBirth { get; set; }
         public string Occupation { get; set; }
+        public string ProfilePhotoUrl { get; set; } // Store base64 image or file path
         public string CreatedBy { get; set; }
         public DateTime CreatedAt { get; set; } 
         public string UpdatedBy { get; set; }

@@ -140,11 +140,40 @@ namespace GymManagmentSystem.Controllers
             user.UpdatedBy = request.UpdatedBy;
             user.UpdatedAt = DateTime.UtcNow;
 
+            // Update profile photo if provided
+            if (!string.IsNullOrEmpty(request.ProfilePhotoUrl))
+            {
+                user.ProfilePhotoUrl = request.ProfilePhotoUrl;
+            }
+
             var result = await _userManager.UpdateAsync(user);
 
             if (result.Succeeded)
             {
                 return NoContent();
+            }
+
+            return BadRequest(result.Errors);
+        }
+
+        // POST: api/User/5/UpdateProfilePhoto
+        [HttpPost("{id}/UpdateProfilePhoto")]
+        public async Task<IActionResult> UpdateProfilePhoto(string id, [FromBody] UpdateProfilePhotoRequest request)
+        {
+            var user = await _userManager.FindByIdAsync(id);
+            if (user == null)
+            {
+                return NotFound();
+            }
+
+            user.ProfilePhotoUrl = request.ProfilePhotoUrl;
+            user.UpdatedAt = DateTime.UtcNow;
+
+            var result = await _userManager.UpdateAsync(user);
+
+            if (result.Succeeded)
+            {
+                return Ok(new { message = "Profile photo updated successfully" });
             }
 
             return BadRequest(result.Errors);
@@ -332,7 +361,13 @@ namespace GymManagmentSystem.Controllers
         public string Address { get; set; }
         public DateTime DateOfBirth { get; set; }
         public string Occupation { get; set; }
+        public string ProfilePhotoUrl { get; set; }
         public string UpdatedBy { get; set; }
+    }
+
+    public class UpdateProfilePhotoRequest
+    {
+        public string ProfilePhotoUrl { get; set; }
     }
 
     public class ChangePasswordRequest
