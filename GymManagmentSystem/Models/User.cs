@@ -16,7 +16,6 @@ namespace GymManagmentSystem.Models
         public string UpdatedBy { get; set; }
         public DateTime UpdatedAt { get; set; }
 
-        public int RoleId { get; set; }
-        public Role Role { get; set; }
+        // Role is handled by Identity framework
     }
 }

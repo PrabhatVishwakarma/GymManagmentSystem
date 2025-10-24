@@ -7,6 +7,7 @@ namespace GymManagmentSystem.Models
 {
     public class EnquiryHistory
     {
+        [Key]
         public int HistoryId { get; set; }
         public int EnquiryId { get; set; }  
         public Enquiry Enquiry { get; set; }  
