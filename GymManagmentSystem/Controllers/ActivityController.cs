@@ -1,7 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
 using GymManagmentSystem.Data;
 using GymManagmentSystem.Models;
+using MongoDB.Driver;
 
 namespace GymManagmentSystem.Controllers
 {
@@ -9,9 +9,9 @@ namespace GymManagmentSystem.Controllers
     [Route("api/[controller]")]
     public class ActivityController : ControllerBase
     {
-        private readonly AppDbContext _context;
+        private readonly MongoDbContext _context;
 
-        public ActivityController(AppDbContext context)
+        public ActivityController(MongoDbContext context)
         {
             _context = context;
         }
@@ -23,21 +23,24 @@ namespace GymManagmentSystem.Controllers
             [FromQuery] string activityType = null,
             [FromQuery] string entityType = null)
         {
-            var query = _context.Activities.AsQueryable();
+            var filterBuilder = Builders<Activity>.Filter;
+            var filter = filterBuilder.Empty;
 
             if (!string.IsNullOrEmpty(activityType))
             {
-                query = query.Where(a => a.ActivityType == activityType);
+                filter = filter & filterBuilder.Eq(a => a.ActivityType, activityType);
             }
 
             if (!string.IsNullOrEmpty(entityType))
             {
-                query = query.Where(a => a.EntityType == entityType);
+                filter = filter & filterBuilder.Eq(a => a.EntityType, entityType);
             }
 
-            var activities = await query
-                .OrderByDescending(a => a.CreatedAt)
-                .Take(limit ?? 100)
+            var sort = Builders<Activity>.Sort.Descending(a => a.CreatedAt);
+            var activities = await _context.Activities
+                .Find(filter)
+                .Sort(sort)
+                .Limit(limit ?? 100)
                 .ToListAsync();
 
             return Ok(activities);
@@ -47,9 +50,11 @@ namespace GymManagmentSystem.Controllers
         [HttpGet("Recent")]
         public async Task<ActionResult<IEnumerable<Activity>>> GetRecentActivities([FromQuery] int limit = 50)
         {
+            var sort = Builders<Activity>.Sort.Descending(a => a.CreatedAt);
             var activities = await _context.Activities
-                .OrderByDescending(a => a.CreatedAt)
-                .Take(limit)
+                .Find(_ => true)
+                .Sort(sort)
+                .Limit(limit)
                 .ToListAsync();
 
             return Ok(activities);
@@ -59,10 +64,13 @@ namespace GymManagmentSystem.Controllers
         [HttpGet("ByEntity/{entityType}/{entityId}")]
         public async Task<ActionResult<IEnumerable<Activity>>> GetActivitiesByEntity(string entityType, int entityId)
         {
-            var activities = await _context.Activities
-                .Where(a => a.EntityType == entityType && a.EntityId == entityId)
-                .OrderByDescending(a => a.CreatedAt)
-                .ToListAsync();
+            var filter = Builders<Activity>.Filter.And(
+                Builders<Activity>.Filter.Eq(a => a.EntityType, entityType),
+                Builders<Activity>.Filter.Eq(a => a.EntityId, entityId)
+            );
+            
+            var sort = Builders<Activity>.Sort.Descending(a => a.CreatedAt);
+            var activities = await _context.Activities.Find(filter).Sort(sort).ToListAsync();
 
             return Ok(activities);
         }
@@ -75,19 +83,22 @@ namespace GymManagmentSystem.Controllers
             var weekAgo = today.AddDays(-7);
             var monthAgo = today.AddDays(-30);
 
+            // Load all activities for stats calculation
+            var allActivities = await _context.Activities.Find(_ => true).ToListAsync();
+
             var stats = new
             {
-                TotalActivities = await _context.Activities.CountAsync(),
-                TodayActivities = await _context.Activities.CountAsync(a => a.CreatedAt >= today),
-                WeekActivities = await _context.Activities.CountAsync(a => a.CreatedAt >= weekAgo),
-                MonthActivities = await _context.Activities.CountAsync(a => a.CreatedAt >= monthAgo),
-                EmailsSent = await _context.Activities.CountAsync(a => a.ActivityType == "Email" && a.IsSuccessful),
-                WhatsAppSent = await _context.Activities.CountAsync(a => a.ActivityType == "WhatsApp" && a.IsSuccessful),
-                FailedActivities = await _context.Activities.CountAsync(a => !a.IsSuccessful),
-                ActivityTypes = await _context.Activities
+                TotalActivities = allActivities.Count,
+                TodayActivities = allActivities.Count(a => a.CreatedAt >= today),
+                WeekActivities = allActivities.Count(a => a.CreatedAt >= weekAgo),
+                MonthActivities = allActivities.Count(a => a.CreatedAt >= monthAgo),
+                EmailsSent = allActivities.Count(a => a.ActivityType == "Email" && a.IsSuccessful),
+                WhatsAppSent = allActivities.Count(a => a.ActivityType == "WhatsApp" && a.IsSuccessful),
+                FailedActivities = allActivities.Count(a => !a.IsSuccessful),
+                ActivityTypes = allActivities
                     .GroupBy(a => a.ActivityType)
                     .Select(g => new { Type = g.Key, Count = g.Count() })
-                    .ToListAsync()
+                    .ToList()
             };
 
             return Ok(stats);
@@ -97,9 +108,10 @@ namespace GymManagmentSystem.Controllers
         [HttpPost]
         public async Task<ActionResult<Activity>> CreateActivity(Activity activity)
         {
+            activity.ActivityId = _context.GetNextSequenceValue("Activities");
             activity.CreatedAt = DateTime.UtcNow;
-            _context.Activities.Add(activity);
-            await _context.SaveChangesAsync();
+            
+            await _context.Activities.InsertOneAsync(activity);
 
             return CreatedAtAction("GetActivities", new { id = activity.ActivityId }, activity);
         }
@@ -108,11 +120,13 @@ namespace GymManagmentSystem.Controllers
         [HttpDelete("{id}")]
         public async Task<IActionResult> DeleteActivity(int id)
         {
-            var activity = await _context.Activities.FindAsync(id);
-            if (activity == null) return NotFound();
-
-            _context.Activities.Remove(activity);
-            await _context.SaveChangesAsync();
+            var filter = Builders<Activity>.Filter.Eq(a => a.ActivityId, id);
+            var result = await _context.Activities.DeleteOneAsync(filter);
+            
+            if (result.DeletedCount == 0)
+            {
+                return NotFound();
+            }
 
             return NoContent();
         }
@@ -122,15 +136,11 @@ namespace GymManagmentSystem.Controllers
         public async Task<IActionResult> ClearOldActivities([FromQuery] int daysOld = 90)
         {
             var cutoffDate = DateTime.UtcNow.AddDays(-daysOld);
-            var oldActivities = await _context.Activities
-                .Where(a => a.CreatedAt < cutoffDate)
-                .ToListAsync();
+            var filter = Builders<Activity>.Filter.Lt(a => a.CreatedAt, cutoffDate);
+            
+            var result = await _context.Activities.DeleteManyAsync(filter);
 
-            _context.Activities.RemoveRange(oldActivities);
-            await _context.SaveChangesAsync();
-
-            return Ok(new { message = $"Deleted {oldActivities.Count} activities older than {daysOld} days" });
+            return Ok(new { message = $"Deleted {result.DeletedCount} activities older than {daysOld} days" });
         }
     }
 }
-

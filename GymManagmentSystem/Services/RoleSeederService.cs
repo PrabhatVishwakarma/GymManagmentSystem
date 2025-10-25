@@ -5,10 +5,10 @@ namespace GymManagmentSystem.Services
 {
     public class RoleSeederService
     {
-        private readonly RoleManager<IdentityRole> _roleManager;
+        private readonly RoleManager<ApplicationRole> _roleManager;
         private readonly UserManager<User> _userManager;
 
-        public RoleSeederService(RoleManager<IdentityRole> roleManager, UserManager<User> userManager)
+        public RoleSeederService(RoleManager<ApplicationRole> roleManager, UserManager<User> userManager)
         {
             _roleManager = roleManager;
             _userManager = userManager;
@@ -22,7 +22,7 @@ namespace GymManagmentSystem.Services
             {
                 if (!await _roleManager.RoleExistsAsync(role))
                 {
-                    await _roleManager.CreateAsync(new IdentityRole(role));
+                    await _roleManager.CreateAsync(new ApplicationRole(role));
                 }
             }
         }

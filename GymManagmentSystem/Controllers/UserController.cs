@@ -1,10 +1,10 @@
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using GymManagmentSystem.Data;
 using GymManagmentSystem.Models;
 using GymManagmentSystem.Models.Enums;
 using System.Security.Claims;
+using MongoDB.Driver;
+using MongoDB.Driver.Linq;
 
 namespace GymManagmentSystem.Controllers
 {
@@ -13,19 +13,18 @@ namespace GymManagmentSystem.Controllers
     public class UserController : ControllerBase
     {
         private readonly UserManager<User> _userManager;
-        private readonly AppDbContext _context;
 
-        public UserController(UserManager<User> userManager, AppDbContext context)
+        public UserController(UserManager<User> userManager)
         {
             _userManager = userManager;
-            _context = context;
         }
 
         // GET: api/User
         [HttpGet]
         public async Task<ActionResult<IEnumerable<User>>> GetUsers()
         {
-            return await _userManager.Users.ToListAsync();
+            var users = _userManager.Users.ToList();
+            return Ok(users);
         }
 
         // GET: api/User/5
@@ -298,16 +297,18 @@ namespace GymManagmentSystem.Controllers
         [HttpGet("Stats")]
         public async Task<ActionResult<UserStats>> GetUserStats()
         {
+            var allUsers = _userManager.Users.ToList();
+            var oneMonthAgo = DateTime.UtcNow.AddMonths(-1);
+            var oneYearAgo = DateTime.UtcNow.AddYears(-1);
+            
             var stats = new UserStats
             {
-                TotalUsers = await _userManager.Users.CountAsync(),
-                UsersCreatedThisMonth = await _userManager.Users
-                    .CountAsync(u => u.CreatedAt >= DateTime.UtcNow.AddMonths(-1)),
-                UsersCreatedThisYear = await _userManager.Users
-                    .CountAsync(u => u.CreatedAt >= DateTime.UtcNow.AddYears(-1))
+                TotalUsers = allUsers.Count(),
+                UsersCreatedThisMonth = allUsers.Count(u => u.CreatedAt >= oneMonthAgo),
+                UsersCreatedThisYear = allUsers.Count(u => u.CreatedAt >= oneYearAgo)
             };
 
-            return stats;
+            return Ok(stats);
         }
 
         // GET: api/User/Profile

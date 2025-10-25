@@ -1,7 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
 using GymManagmentSystem.Data;
 using GymManagmentSystem.Models;
+using MongoDB.Driver;
 
 namespace GymManagmentSystem.Controllers
 {
@@ -9,9 +9,9 @@ namespace GymManagmentSystem.Controllers
     [Route("api/[controller]")]
     public class MembershipPlanController : ControllerBase
     {
-        private readonly AppDbContext _context;
+        private readonly MongoDbContext _context;
 
-        public MembershipPlanController(AppDbContext context)
+        public MembershipPlanController(MongoDbContext context)
         {
             _context = context;
         }
@@ -20,55 +20,59 @@ namespace GymManagmentSystem.Controllers
         [HttpGet]
         public async Task<ActionResult<IEnumerable<MembershipPlan>>> GetMembershipPlans()
         {
-            return await _context.MembershipPlans
-                .Where(mp => mp.IsActive)
-                .OrderBy(mp => mp.PlanName)
-                .ToListAsync();
+            var filter = Builders<MembershipPlan>.Filter.Eq(mp => mp.IsActive, true);
+            var sort = Builders<MembershipPlan>.Sort.Ascending(mp => mp.PlanName);
+            var plans = await _context.MembershipPlans.Find(filter).Sort(sort).ToListAsync();
+            return Ok(plans);
         }
 
         // GET: api/MembershipPlan/5
         [HttpGet("{id}")]
         public async Task<ActionResult<MembershipPlan>> GetMembershipPlan(int id)
         {
-            var membershipPlan = await _context.MembershipPlans.FindAsync(id);
+            var filter = Builders<MembershipPlan>.Filter.Eq(mp => mp.MembershipPlanId, id);
+            var membershipPlan = await _context.MembershipPlans.Find(filter).FirstOrDefaultAsync();
 
             if (membershipPlan == null)
             {
                 return NotFound();
             }
 
-            return membershipPlan;
+            return Ok(membershipPlan);
         }
 
         // GET: api/MembershipPlan/Active
         [HttpGet("Active")]
         public async Task<ActionResult<IEnumerable<MembershipPlan>>> GetActiveMembershipPlans()
         {
-            return await _context.MembershipPlans
-                .Where(mp => mp.IsActive)
-                .OrderBy(mp => mp.Price)
-                .ToListAsync();
+            var filter = Builders<MembershipPlan>.Filter.Eq(mp => mp.IsActive, true);
+            var sort = Builders<MembershipPlan>.Sort.Ascending(mp => mp.Price);
+            var plans = await _context.MembershipPlans.Find(filter).Sort(sort).ToListAsync();
+            return Ok(plans);
         }
 
         // GET: api/MembershipPlan/ByType/{planType}
         [HttpGet("ByType/{planType}")]
         public async Task<ActionResult<IEnumerable<MembershipPlan>>> GetMembershipPlansByType(string planType)
         {
-            return await _context.MembershipPlans
-                .Where(mp => mp.PlanType.ToLower() == planType.ToLower() && mp.IsActive)
-                .OrderBy(mp => mp.Price)
-                .ToListAsync();
+            var filter = Builders<MembershipPlan>.Filter.And(
+                Builders<MembershipPlan>.Filter.Regex(mp => mp.PlanType, new MongoDB.Bson.BsonRegularExpression(planType, "i")),
+                Builders<MembershipPlan>.Filter.Eq(mp => mp.IsActive, true)
+            );
+            var sort = Builders<MembershipPlan>.Sort.Ascending(mp => mp.Price);
+            var plans = await _context.MembershipPlans.Find(filter).Sort(sort).ToListAsync();
+            return Ok(plans);
         }
 
         // POST: api/MembershipPlan
         [HttpPost]
         public async Task<ActionResult<MembershipPlan>> PostMembershipPlan(MembershipPlan membershipPlan)
         {
+            membershipPlan.MembershipPlanId = _context.GetNextSequenceValue("MembershipPlans");
             membershipPlan.CreatedAt = DateTime.UtcNow;
             membershipPlan.UpdatedAt = DateTime.UtcNow;
             
-            _context.MembershipPlans.Add(membershipPlan);
-            await _context.SaveChangesAsync();
+            await _context.MembershipPlans.InsertOneAsync(membershipPlan);
 
             return CreatedAtAction("GetMembershipPlan", new { id = membershipPlan.MembershipPlanId }, membershipPlan);
         }
@@ -83,22 +87,13 @@ namespace GymManagmentSystem.Controllers
             }
 
             membershipPlan.UpdatedAt = DateTime.UtcNow;
-            _context.Entry(membershipPlan).State = EntityState.Modified;
+            
+            var filter = Builders<MembershipPlan>.Filter.Eq(mp => mp.MembershipPlanId, id);
+            var result = await _context.MembershipPlans.ReplaceOneAsync(filter, membershipPlan);
 
-            try
+            if (result.MatchedCount == 0)
             {
-                await _context.SaveChangesAsync();
-            }
-            catch (DbUpdateConcurrencyException)
-            {
-                if (!MembershipPlanExists(id))
-                {
-                    return NotFound();
-                }
-                else
-                {
-                    throw;
-                }
+                return NotFound();
             }
 
             return NoContent();
@@ -108,7 +103,9 @@ namespace GymManagmentSystem.Controllers
         [HttpDelete("{id}")]
         public async Task<IActionResult> DeleteMembershipPlan(int id)
         {
-            var membershipPlan = await _context.MembershipPlans.FindAsync(id);
+            var filter = Builders<MembershipPlan>.Filter.Eq(mp => mp.MembershipPlanId, id);
+            var membershipPlan = await _context.MembershipPlans.Find(filter).FirstOrDefaultAsync();
+            
             if (membershipPlan == null)
             {
                 return NotFound();
@@ -118,7 +115,7 @@ namespace GymManagmentSystem.Controllers
             membershipPlan.IsActive = false;
             membershipPlan.UpdatedAt = DateTime.UtcNow;
             
-            await _context.SaveChangesAsync();
+            await _context.MembershipPlans.ReplaceOneAsync(filter, membershipPlan);
 
             return NoContent();
         }
@@ -127,7 +124,9 @@ namespace GymManagmentSystem.Controllers
         [HttpPut("{id}/Activate")]
         public async Task<IActionResult> ActivateMembershipPlan(int id)
         {
-            var membershipPlan = await _context.MembershipPlans.FindAsync(id);
+            var filter = Builders<MembershipPlan>.Filter.Eq(mp => mp.MembershipPlanId, id);
+            var membershipPlan = await _context.MembershipPlans.Find(filter).FirstOrDefaultAsync();
+            
             if (membershipPlan == null)
             {
                 return NotFound();
@@ -136,43 +135,76 @@ namespace GymManagmentSystem.Controllers
             membershipPlan.IsActive = true;
             membershipPlan.UpdatedAt = DateTime.UtcNow;
             
-            await _context.SaveChangesAsync();
+            await _context.MembershipPlans.ReplaceOneAsync(filter, membershipPlan);
 
             return NoContent();
         }
 
         // GET: api/MembershipPlan/5/Members
         [HttpGet("{id}/Members")]
-        public async Task<ActionResult<IEnumerable<MembersMembership>>> GetMembershipPlanMembers(int id)
+        public async Task<ActionResult<IEnumerable<object>>> GetMembershipPlanMembers(int id)
         {
-            var members = await _context.MembersMemberships
-                .Include(mm => mm.Enquiry)
-                .Include(mm => mm.MembershipPlan)
-                .Where(mm => mm.MembershipPlanId == id)
-                .ToListAsync();
+            // Get members with this plan
+            var membershipFilter = Builders<MembersMembership>.Filter.Eq(mm => mm.MembershipPlanId, id);
+            var memberships = await _context.MembersMemberships.Find(membershipFilter).ToListAsync();
 
-            return members;
+            // Get related enquiries and plans for each membership
+            var result = new List<object>();
+            foreach (var membership in memberships)
+            {
+                var enquiryFilter = Builders<Enquiry>.Filter.Eq(e => e.EnquiryId, membership.EnquiryId);
+                var enquiry = await _context.Enquiries.Find(enquiryFilter).FirstOrDefaultAsync();
+
+                var planFilter = Builders<MembershipPlan>.Filter.Eq(p => p.MembershipPlanId, membership.MembershipPlanId);
+                var plan = await _context.MembershipPlans.Find(planFilter).FirstOrDefaultAsync();
+
+                result.Add(new
+                {
+                    membersMembershipId = membership.MembersMembershipId,
+                    enquiryId = membership.EnquiryId,
+                    membershipPlanId = membership.MembershipPlanId,
+                    startDate = membership.StartDate,
+                    endDate = membership.EndDate,
+                    totalAmount = membership.TotalAmount,
+                    paidAmount = membership.PaidAmount,
+                    remainingAmount = membership.RemainingAmount,
+                    isActive = membership.IsActive,
+                    enquiry = enquiry,
+                    membershipPlan = plan,
+                    createdAt = membership.CreatedAt
+                });
+            }
+
+            return Ok(result);
         }
 
         // GET: api/MembershipPlan/Stats
         [HttpGet("Stats")]
         public async Task<ActionResult<MembershipPlanStats>> GetMembershipPlanStats()
         {
+            var totalPlans = await _context.MembershipPlans.CountDocumentsAsync(_ => true);
+            var activeFilter = Builders<MembershipPlan>.Filter.Eq(mp => mp.IsActive, true);
+            var activePlans = await _context.MembershipPlans.CountDocumentsAsync(activeFilter);
+            
+            var totalMembers = await _context.MembersMemberships.CountDocumentsAsync(_ => true);
+            
+            // Count active members
+            var memberships = await _context.MembersMemberships.Find(_ => true).ToListAsync();
+            var activeMembers = memberships.Count(mm => mm.IsActive);
+            
+            // Sum total revenue
+            var totalRevenue = memberships.Sum(mm => mm.PaidAmount);
+
             var stats = new MembershipPlanStats
             {
-                TotalPlans = await _context.MembershipPlans.CountAsync(),
-                ActivePlans = await _context.MembershipPlans.CountAsync(mp => mp.IsActive),
-                TotalMembers = await _context.MembersMemberships.CountAsync(),
-                ActiveMembers = await _context.MembersMemberships.CountAsync(mm => mm.IsActive),
-                TotalRevenue = await _context.MembersMemberships.SumAsync(mm => mm.PaidAmount)
+                TotalPlans = (int)totalPlans,
+                ActivePlans = (int)activePlans,
+                TotalMembers = (int)totalMembers,
+                ActiveMembers = activeMembers,
+                TotalRevenue = totalRevenue
             };
 
-            return stats;
-        }
-
-        private bool MembershipPlanExists(int id)
-        {
-            return _context.MembershipPlans.Any(e => e.MembershipPlanId == id);
+            return Ok(stats);
         }
     }
 

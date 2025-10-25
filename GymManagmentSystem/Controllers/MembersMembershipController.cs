@@ -1,9 +1,9 @@
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
 using GymManagmentSystem.Data;
 using GymManagmentSystem.Models;
-    using GymManagmentSystem.Services;
+using GymManagmentSystem.Services;
 using OfficeOpenXml;
+using MongoDB.Driver;
 
 namespace GymManagmentSystem.Controllers
 {
@@ -11,11 +11,11 @@ namespace GymManagmentSystem.Controllers
     [Route("api/[controller]")]
     public class MembersMembershipController : ControllerBase
     {
-        private readonly AppDbContext _context;
+        private readonly MongoDbContext _context;
         private readonly PdfReceiptService _pdfService;
         private readonly NotificationService _notificationService;
 
-        public MembersMembershipController(AppDbContext context, PdfReceiptService pdfService, NotificationService notificationService)
+        public MembersMembershipController(MongoDbContext context, PdfReceiptService pdfService, NotificationService notificationService)
         {
             _context = context;
             _pdfService = pdfService;
@@ -24,83 +24,223 @@ namespace GymManagmentSystem.Controllers
 
         // GET: api/MembersMembership
         [HttpGet]
-        public async Task<ActionResult<IEnumerable<MembersMembership>>> GetMembersMemberships()
+        public async Task<ActionResult<IEnumerable<object>>> GetMembersMemberships()
         {
-            return await _context.MembersMemberships
-                .Include(mm => mm.Enquiry)
-                .Include(mm => mm.MembershipPlan)
-                .OrderByDescending(mm => mm.CreatedAt)
-                .ToListAsync();
+            var sort = Builders<MembersMembership>.Sort.Descending(mm => mm.CreatedAt);
+            var memberships = await _context.MembersMemberships.Find(_ => true).Sort(sort).ToListAsync();
+
+            // Load related data for each membership
+            var result = new List<object>();
+            foreach (var membership in memberships)
+            {
+                var enquiryFilter = Builders<Enquiry>.Filter.Eq(e => e.EnquiryId, membership.EnquiryId);
+                var enquiry = await _context.Enquiries.Find(enquiryFilter).FirstOrDefaultAsync();
+
+                var planFilter = Builders<MembershipPlan>.Filter.Eq(p => p.MembershipPlanId, membership.MembershipPlanId);
+                var plan = await _context.MembershipPlans.Find(planFilter).FirstOrDefaultAsync();
+
+                result.Add(new
+                {
+                    membersMembershipId = membership.MembersMembershipId,
+                    enquiryId = membership.EnquiryId,
+                    membershipPlanId = membership.MembershipPlanId,
+                    startDate = membership.StartDate,
+                    endDate = membership.EndDate,
+                    totalAmount = membership.TotalAmount,
+                    paidAmount = membership.PaidAmount,
+                    remainingAmount = membership.RemainingAmount,
+                    nextPaymentDueDate = membership.NextPaymentDueDate,
+                    isInactive = membership.IsInactive,
+                    isActive = membership.IsActive,
+                    createdBy = membership.CreatedBy,
+                    createdAt = membership.CreatedAt,
+                    enquiry = enquiry,
+                    membershipPlan = plan
+                });
+            }
+
+            return Ok(result);
         }
 
         // GET: api/MembersMembership/5
         [HttpGet("{id}")]
-        public async Task<ActionResult<MembersMembership>> GetMembersMembership(int id)
+        public async Task<ActionResult<object>> GetMembersMembership(int id)
         {
-            var membersMembership = await _context.MembersMemberships
-                .Include(mm => mm.Enquiry)
-                .Include(mm => mm.MembershipPlan)
-                .FirstOrDefaultAsync(mm => mm.MembersMembershipId == id);
+            var filter = Builders<MembersMembership>.Filter.Eq(mm => mm.MembersMembershipId, id);
+            var membership = await _context.MembersMemberships.Find(filter).FirstOrDefaultAsync();
 
-            if (membersMembership == null)
+            if (membership == null)
             {
                 return NotFound();
             }
 
-            return membersMembership;
+            // Load related data
+            var enquiryFilter = Builders<Enquiry>.Filter.Eq(e => e.EnquiryId, membership.EnquiryId);
+            var enquiry = await _context.Enquiries.Find(enquiryFilter).FirstOrDefaultAsync();
+
+            var planFilter = Builders<MembershipPlan>.Filter.Eq(p => p.MembershipPlanId, membership.MembershipPlanId);
+            var plan = await _context.MembershipPlans.Find(planFilter).FirstOrDefaultAsync();
+
+            return Ok(new
+            {
+                membersMembershipId = membership.MembersMembershipId,
+                enquiryId = membership.EnquiryId,
+                membershipPlanId = membership.MembershipPlanId,
+                startDate = membership.StartDate,
+                endDate = membership.EndDate,
+                totalAmount = membership.TotalAmount,
+                paidAmount = membership.PaidAmount,
+                remainingAmount = membership.RemainingAmount,
+                nextPaymentDueDate = membership.NextPaymentDueDate,
+                isInactive = membership.IsInactive,
+                isActive = membership.IsActive,
+                createdBy = membership.CreatedBy,
+                createdAt = membership.CreatedAt,
+                enquiry = enquiry,
+                membershipPlan = plan
+            });
         }
 
         // GET: api/MembersMembership/Active
         [HttpGet("Active")]
-        public async Task<ActionResult<IEnumerable<MembersMembership>>> GetActiveMemberships()
+        public async Task<ActionResult<IEnumerable<object>>> GetActiveMemberships()
         {
-            return await _context.MembersMemberships
-                .Include(mm => mm.Enquiry)
-                .Include(mm => mm.MembershipPlan)
-                .Where(mm => mm.IsActive)
-                .OrderByDescending(mm => mm.StartDate)
-                .ToListAsync();
+            var memberships = await _context.MembersMemberships.Find(_ => true).ToListAsync();
+            
+            // Filter active memberships in memory (since IsActive is computed)
+            var activeMemberships = memberships.Where(mm => mm.IsActive).OrderByDescending(mm => mm.StartDate).ToList();
+
+            // Load related data
+            var result = new List<object>();
+            foreach (var membership in activeMemberships)
+            {
+                var enquiryFilter = Builders<Enquiry>.Filter.Eq(e => e.EnquiryId, membership.EnquiryId);
+                var enquiry = await _context.Enquiries.Find(enquiryFilter).FirstOrDefaultAsync();
+
+                var planFilter = Builders<MembershipPlan>.Filter.Eq(p => p.MembershipPlanId, membership.MembershipPlanId);
+                var plan = await _context.MembershipPlans.Find(planFilter).FirstOrDefaultAsync();
+
+                result.Add(new
+                {
+                    membersMembershipId = membership.MembersMembershipId,
+                    enquiryId = membership.EnquiryId,
+                    membershipPlanId = membership.MembershipPlanId,
+                    startDate = membership.StartDate,
+                    endDate = membership.EndDate,
+                    totalAmount = membership.TotalAmount,
+                    paidAmount = membership.PaidAmount,
+                    remainingAmount = membership.RemainingAmount,
+                    isActive = membership.IsActive,
+                    enquiry = enquiry,
+                    membershipPlan = plan
+                });
+            }
+
+            return Ok(result);
         }
 
         // GET: api/MembersMembership/Expired
         [HttpGet("Expired")]
-        public async Task<ActionResult<IEnumerable<MembersMembership>>> GetExpiredMemberships()
+        public async Task<ActionResult<IEnumerable<object>>> GetExpiredMemberships()
         {
             var currentDate = DateTime.UtcNow;
-            return await _context.MembersMemberships
-                .Include(mm => mm.Enquiry)
-                .Include(mm => mm.MembershipPlan)
-                .Where(mm => mm.EndDate < currentDate)
-                .OrderByDescending(mm => mm.EndDate)
-                .ToListAsync();
+            var memberships = await _context.MembersMemberships.Find(_ => true).ToListAsync();
+            
+            // Filter expired memberships (EndDate < currentDate)
+            var expiredMemberships = memberships.Where(mm => mm.EndDate < currentDate).OrderByDescending(mm => mm.EndDate).ToList();
+
+            var result = new List<object>();
+            foreach (var membership in expiredMemberships)
+            {
+                var enquiryFilter = Builders<Enquiry>.Filter.Eq(e => e.EnquiryId, membership.EnquiryId);
+                var enquiry = await _context.Enquiries.Find(enquiryFilter).FirstOrDefaultAsync();
+
+                var planFilter = Builders<MembershipPlan>.Filter.Eq(p => p.MembershipPlanId, membership.MembershipPlanId);
+                var plan = await _context.MembershipPlans.Find(planFilter).FirstOrDefaultAsync();
+
+                result.Add(new
+                {
+                    membersMembershipId = membership.MembersMembershipId,
+                    enquiryId = membership.EnquiryId,
+                    membershipPlanId = membership.MembershipPlanId,
+                    startDate = membership.StartDate,
+                    endDate = membership.EndDate,
+                    totalAmount = membership.TotalAmount,
+                    paidAmount = membership.PaidAmount,
+                    enquiry = enquiry,
+                    membershipPlan = plan
+                });
+            }
+
+            return Ok(result);
         }
 
         // GET: api/MembersMembership/ExpiringSoon
         [HttpGet("ExpiringSoon")]
-        public async Task<ActionResult<IEnumerable<MembersMembership>>> GetExpiringSoonMemberships()
+        public async Task<ActionResult<IEnumerable<object>>> GetExpiringSoonMemberships()
         {
             var currentDate = DateTime.UtcNow;
             var thirtyDaysFromNow = currentDate.AddDays(30);
             
-            return await _context.MembersMemberships
-                .Include(mm => mm.Enquiry)
-                .Include(mm => mm.MembershipPlan)
+            var memberships = await _context.MembersMemberships.Find(_ => true).ToListAsync();
+            var expiringSoon = memberships
                 .Where(mm => mm.EndDate >= currentDate && mm.EndDate <= thirtyDaysFromNow)
                 .OrderBy(mm => mm.EndDate)
-                .ToListAsync();
+                .ToList();
+
+            var result = new List<object>();
+            foreach (var membership in expiringSoon)
+            {
+                var enquiryFilter = Builders<Enquiry>.Filter.Eq(e => e.EnquiryId, membership.EnquiryId);
+                var enquiry = await _context.Enquiries.Find(enquiryFilter).FirstOrDefaultAsync();
+
+                var planFilter = Builders<MembershipPlan>.Filter.Eq(p => p.MembershipPlanId, membership.MembershipPlanId);
+                var plan = await _context.MembershipPlans.Find(planFilter).FirstOrDefaultAsync();
+
+                result.Add(new
+                {
+                    membersMembershipId = membership.MembersMembershipId,
+                    endDate = membership.EndDate,
+                    enquiry = enquiry,
+                    membershipPlan = plan
+                });
+            }
+
+            return Ok(result);
         }
 
         // GET: api/MembersMembership/PendingPayments
         [HttpGet("PendingPayments")]
-        public async Task<ActionResult<IEnumerable<MembersMembership>>> GetPendingPayments()
+        public async Task<ActionResult<IEnumerable<object>>> GetPendingPayments()
         {
             var currentDate = DateTime.UtcNow;
-            return await _context.MembersMemberships
-                .Include(mm => mm.Enquiry)
-                .Include(mm => mm.MembershipPlan)
+            var memberships = await _context.MembersMemberships.Find(_ => true).ToListAsync();
+            
+            var pendingPayments = memberships
                 .Where(mm => mm.RemainingAmount > 0 && mm.NextPaymentDueDate <= currentDate)
                 .OrderBy(mm => mm.NextPaymentDueDate)
-                .ToListAsync();
+                .ToList();
+
+            var result = new List<object>();
+            foreach (var membership in pendingPayments)
+            {
+                var enquiryFilter = Builders<Enquiry>.Filter.Eq(e => e.EnquiryId, membership.EnquiryId);
+                var enquiry = await _context.Enquiries.Find(enquiryFilter).FirstOrDefaultAsync();
+
+                var planFilter = Builders<MembershipPlan>.Filter.Eq(p => p.MembershipPlanId, membership.MembershipPlanId);
+                var plan = await _context.MembershipPlans.Find(planFilter).FirstOrDefaultAsync();
+
+                result.Add(new
+                {
+                    membersMembershipId = membership.MembersMembershipId,
+                    remainingAmount = membership.RemainingAmount,
+                    nextPaymentDueDate = membership.NextPaymentDueDate,
+                    enquiry = enquiry,
+                    membershipPlan = plan
+                });
+            }
+
+            return Ok(result);
         }
 
         // POST: api/MembersMembership
@@ -108,23 +248,26 @@ namespace GymManagmentSystem.Controllers
         public async Task<ActionResult<MembersMembership>> PostMembersMembership(MembersMembership membersMembership)
         {
             // Validate that enquiry and membership plan exist
-            var enquiry = await _context.Enquiries.FindAsync(membersMembership.EnquiryId);
+            var enquiryFilter = Builders<Enquiry>.Filter.Eq(e => e.EnquiryId, membersMembership.EnquiryId);
+            var enquiry = await _context.Enquiries.Find(enquiryFilter).FirstOrDefaultAsync();
             if (enquiry == null)
             {
                 return BadRequest("Enquiry not found");
             }
 
-            var membershipPlan = await _context.MembershipPlans.FindAsync(membersMembership.MembershipPlanId);
+            var planFilter = Builders<MembershipPlan>.Filter.Eq(p => p.MembershipPlanId, membersMembership.MembershipPlanId);
+            var membershipPlan = await _context.MembershipPlans.Find(planFilter).FirstOrDefaultAsync();
             if (membershipPlan == null)
             {
                 return BadRequest("Membership plan not found");
             }
 
+            membersMembership.MembersMembershipId = _context.GetNextSequenceValue("MembersMemberships");
+            membersMembership.DurationInMonths = membershipPlan.DurationInMonths;
             membersMembership.CreatedAt = DateTime.UtcNow;
             membersMembership.UpdatedAt = DateTime.UtcNow;
             
-            _context.MembersMemberships.Add(membersMembership);
-            await _context.SaveChangesAsync();
+            await _context.MembersMemberships.InsertOneAsync(membersMembership);
 
             return CreatedAtAction("GetMembersMembership", new { id = membersMembership.MembersMembershipId }, membersMembership);
         }
@@ -139,22 +282,13 @@ namespace GymManagmentSystem.Controllers
             }
 
             membersMembership.UpdatedAt = DateTime.UtcNow;
-            _context.Entry(membersMembership).State = EntityState.Modified;
+            
+            var filter = Builders<MembersMembership>.Filter.Eq(mm => mm.MembersMembershipId, id);
+            var result = await _context.MembersMemberships.ReplaceOneAsync(filter, membersMembership);
 
-            try
+            if (result.MatchedCount == 0)
             {
-                await _context.SaveChangesAsync();
-            }
-            catch (DbUpdateConcurrencyException)
-            {
-                if (!MembersMembershipExists(id))
-                {
-                    return NotFound();
-                }
-                else
-                {
-                    throw;
-                }
+                return NotFound();
             }
 
             return NoContent();
@@ -162,12 +296,10 @@ namespace GymManagmentSystem.Controllers
 
         // POST: api/MembersMembership/5/Payment
         [HttpPost("{id}/Payment")]
-        public async Task<ActionResult<PaymentResponse>> ProcessPayment(int id, [FromBody] PaymentRequest paymentRequest)
+        public async Task<ActionResult<object>> ProcessPayment(int id, [FromBody] PaymentRequest paymentRequest)
         {
-            var membersMembership = await _context.MembersMemberships
-                .Include(m => m.Enquiry)
-                .Include(m => m.MembershipPlan)
-                .FirstOrDefaultAsync(m => m.MembersMembershipId == id);
+            var filter = Builders<MembersMembership>.Filter.Eq(m => m.MembersMembershipId, id);
+            var membersMembership = await _context.MembersMemberships.Find(filter).FirstOrDefaultAsync();
                 
             if (membersMembership == null)
             {
@@ -184,6 +316,13 @@ namespace GymManagmentSystem.Controllers
                 return BadRequest("Payment amount cannot exceed remaining amount");
             }
 
+            // Load related data
+            var enquiryFilter = Builders<Enquiry>.Filter.Eq(e => e.EnquiryId, membersMembership.EnquiryId);
+            var enquiry = await _context.Enquiries.Find(enquiryFilter).FirstOrDefaultAsync();
+
+            var planFilter = Builders<MembershipPlan>.Filter.Eq(p => p.MembershipPlanId, membersMembership.MembershipPlanId);
+            var plan = await _context.MembershipPlans.Find(planFilter).FirstOrDefaultAsync();
+
             var previousPaid = membersMembership.PaidAmount;
             membersMembership.PaidAmount += paymentRequest.Amount;
             membersMembership.UpdatedAt = DateTime.UtcNow;
@@ -199,14 +338,15 @@ namespace GymManagmentSystem.Controllers
                 membersMembership.NextPaymentDueDate = null;
             }
 
-            await _context.SaveChangesAsync();
+            await _context.MembersMemberships.ReplaceOneAsync(filter, membersMembership);
 
             // Create payment receipt
-            var receiptCount = await _context.PaymentReceipts.CountAsync();
+            var receiptCount = await _context.PaymentReceipts.CountDocumentsAsync(_ => true);
             var receiptNumber = $"REC-{DateTime.UtcNow:yyyy}-{(receiptCount + 1):D5}";
 
             var receipt = new PaymentReceipt
             {
+                PaymentReceiptId = _context.GetNextSequenceValue("PaymentReceipts"),
                 ReceiptNumber = receiptNumber,
                 MembersMembershipId = id,
                 AmountPaid = paymentRequest.Amount,
@@ -218,37 +358,37 @@ namespace GymManagmentSystem.Controllers
                 Notes = paymentRequest.Notes,
                 PaymentDate = DateTime.UtcNow,
                 ReceivedBy = User?.Identity?.Name ?? "Admin",
-                MemberName = $"{membersMembership.Enquiry?.FirstName} {membersMembership.Enquiry?.LastName}",
-                MemberEmail = membersMembership.Enquiry?.Email,
-                MemberPhone = membersMembership.Enquiry?.Phone,
-                PlanName = membersMembership.MembershipPlan?.PlanName,
+                MemberName = $"{enquiry?.FirstName} {enquiry?.LastName}",
+                MemberEmail = enquiry?.Email,
+                MemberPhone = enquiry?.Phone,
+                PlanName = plan?.PlanName,
                 CreatedAt = DateTime.UtcNow,
                 EmailSent = false
             };
-            _context.PaymentReceipts.Add(receipt);
-            await _context.SaveChangesAsync();
+            await _context.PaymentReceipts.InsertOneAsync(receipt);
             
             // Generate and save HTML content to database
             receipt.HtmlContent = _pdfService.GenerateReceiptHtmlContent(receipt);
-            _context.PaymentReceipts.Update(receipt);
+            var receiptFilter = Builders<PaymentReceipt>.Filter.Eq(r => r.PaymentReceiptId, receipt.PaymentReceiptId);
+            await _context.PaymentReceipts.ReplaceOneAsync(receiptFilter, receipt);
 
             // Log payment activity
             var memberName = receipt.MemberName;
             var activity = new Activity
             {
+                ActivityId = _context.GetNextSequenceValue("Activities"),
                 ActivityType = "PaymentReceived",
                 Description = $"Payment of ${paymentRequest.Amount:N2} received from {memberName}",
                 EntityType = "Member",
                 EntityId = id,
                 RecipientName = memberName,
-                RecipientContact = membersMembership.Enquiry?.Email,
+                RecipientContact = enquiry?.Email,
                 MessageContent = $"Receipt: {receiptNumber}, Payment: ${paymentRequest.Amount:N2}, Total Paid: ${membersMembership.PaidAmount:N2}, Remaining: ${membersMembership.RemainingAmount:N2}, Method: {paymentRequest.PaymentMethod ?? "Cash"}",
                 IsSuccessful = true,
                 PerformedBy = User?.Identity?.Name ?? "System",
                 CreatedAt = DateTime.UtcNow
             };
-            _context.Activities.Add(activity);
-            await _context.SaveChangesAsync();
+            await _context.Activities.InsertOneAsync(activity);
 
             // Send receipt email (async, don't wait - don't block response)
             _ = Task.Run(async () =>
@@ -267,7 +407,8 @@ namespace GymManagmentSystem.Controllers
                     // Update receipt to mark email as sent
                     receipt.EmailSent = true;
                     receipt.EmailSentAt = DateTime.UtcNow;
-                    await _context.SaveChangesAsync();
+                    var updateFilter = Builders<PaymentReceipt>.Filter.Eq(r => r.PaymentReceiptId, receipt.PaymentReceiptId);
+                    await _context.PaymentReceipts.ReplaceOneAsync(updateFilter, receipt);
                 }
                 catch (Exception ex)
                 {
@@ -289,84 +430,89 @@ namespace GymManagmentSystem.Controllers
         }
 
         // PUT: api/MembersMembership/5/Renew
-        [HttpPut("{id}/Renew")]
+        [HttpPost("{id}/Renew")]
         public async Task<ActionResult<MembersMembership>> RenewMembership(int id, [FromBody] RenewalRequest renewalRequest)
         {
-            var membersMembership = await _context.MembersMemberships
-                .Include(mm => mm.MembershipPlan)
-                .FirstOrDefaultAsync(mm => mm.MembersMembershipId == id);
+            var filter = Builders<MembersMembership>.Filter.Eq(mm => mm.MembersMembershipId, id);
+            var membersMembership = await _context.MembersMemberships.Find(filter).FirstOrDefaultAsync();
 
             if (membersMembership == null)
             {
                 return NotFound("Membership not found");
             }
 
+            var planFilter = Builders<MembershipPlan>.Filter.Eq(p => p.MembershipPlanId, membersMembership.MembershipPlanId);
+            var plan = await _context.MembershipPlans.Find(planFilter).FirstOrDefaultAsync();
+
             // Extend the membership
             membersMembership.StartDate = DateTime.UtcNow;
             membersMembership.PaidAmount = renewalRequest.PaidAmount;
-            membersMembership.TotalAmount = membersMembership.MembershipPlan.Price;
+            membersMembership.TotalAmount = plan.Price;
+            membersMembership.DurationInMonths = plan.DurationInMonths;
             membersMembership.NextPaymentDueDate = DateTime.UtcNow.AddMonths(1);
             membersMembership.UpdatedAt = DateTime.UtcNow;
             membersMembership.UpdatedBy = renewalRequest.UpdatedBy;
 
-            await _context.SaveChangesAsync();
+            await _context.MembersMemberships.ReplaceOneAsync(filter, membersMembership);
 
             return Ok(membersMembership);
         }
 
         // PUT: api/MembersMembership/5/Upgrade
         [HttpPut("{id}/Upgrade")]
-        public async Task<ActionResult<MembersMembership>> UpgradeMembership(int id, [FromBody] UpgradeRequest request)
+        public async Task<ActionResult<object>> UpgradeMembership(int id, [FromBody] UpgradeRequest request)
         {
-            var membership = await _context.MembersMemberships
-                .Include(m => m.MembershipPlan)
-                .Include(m => m.Enquiry)
-                .FirstOrDefaultAsync(m => m.MembersMembershipId == id);
+            var filter = Builders<MembersMembership>.Filter.Eq(m => m.MembersMembershipId, id);
+            var membership = await _context.MembersMemberships.Find(filter).FirstOrDefaultAsync();
 
             if (membership == null)
             {
                 return NotFound(new { message = "Membership not found" });
             }
 
-            var newPlan = await _context.MembershipPlans.FindAsync(request.NewMembershipPlanId);
+            var newPlanFilter = Builders<MembershipPlan>.Filter.Eq(p => p.MembershipPlanId, request.NewMembershipPlanId);
+            var newPlan = await _context.MembershipPlans.Find(newPlanFilter).FirstOrDefaultAsync();
             if (newPlan == null)
             {
                 return NotFound(new { message = "New membership plan not found" });
             }
 
-            var oldPlanName = membership.MembershipPlan?.PlanName;
-            var memberName = $"{membership.Enquiry?.FirstName} {membership.Enquiry?.LastName}";
+            var oldPlanFilter = Builders<MembershipPlan>.Filter.Eq(p => p.MembershipPlanId, membership.MembershipPlanId);
+            var oldPlan = await _context.MembershipPlans.Find(oldPlanFilter).FirstOrDefaultAsync();
+            var oldPlanName = oldPlan?.PlanName;
+
+            var enquiryFilter = Builders<Enquiry>.Filter.Eq(e => e.EnquiryId, membership.EnquiryId);
+            var enquiry = await _context.Enquiries.Find(enquiryFilter).FirstOrDefaultAsync();
+            var memberName = $"{enquiry?.FirstName} {enquiry?.LastName}";
 
             // Upgrade membership
             membership.MembershipPlanId = newPlan.MembershipPlanId;
-            membership.StartDate = DateTime.UtcNow; // Reset start date for new plan
+            membership.StartDate = DateTime.UtcNow;
+            membership.DurationInMonths = newPlan.DurationInMonths;
             membership.TotalAmount = newPlan.Price;
             membership.PaidAmount = request.PaidAmount;
             membership.NextPaymentDueDate = membership.RemainingAmount > 0 ? DateTime.UtcNow.AddMonths(1) : null;
             membership.UpdatedAt = DateTime.UtcNow;
             membership.UpdatedBy = request.UpdatedBy;
 
-            await _context.SaveChangesAsync();
+            await _context.MembersMemberships.ReplaceOneAsync(filter, membership);
 
             // Log activity
             var activity = new Activity
             {
+                ActivityId = _context.GetNextSequenceValue("Activities"),
                 ActivityType = "MembershipUpgraded",
                 Description = $"Membership upgraded from {oldPlanName} to {newPlan.PlanName}",
                 EntityType = "Member",
                 EntityId = id,
                 RecipientName = memberName,
-                RecipientContact = membership.Enquiry?.Email,
+                RecipientContact = enquiry?.Email,
                 MessageContent = $"Plan: {newPlan.PlanName}, Amount: ${newPlan.Price}, Paid: ${request.PaidAmount}",
                 IsSuccessful = true,
                 PerformedBy = request.UpdatedBy,
                 CreatedAt = DateTime.UtcNow
             };
-            _context.Activities.Add(activity);
-            await _context.SaveChangesAsync();
-
-            // Reload with new plan details
-            await _context.Entry(membership).Reference(m => m.MembershipPlan).LoadAsync();
+            await _context.Activities.InsertOneAsync(activity);
 
             return Ok(new 
             { 
@@ -379,10 +525,8 @@ namespace GymManagmentSystem.Controllers
         [HttpDelete("{id}")]
         public async Task<IActionResult> DeleteMembersMembership(int id)
         {
-            var membersMembership = await _context.MembersMemberships
-                .Include(m => m.Enquiry)
-                .Include(m => m.MembershipPlan)
-                .FirstOrDefaultAsync(m => m.MembersMembershipId == id);
+            var filter = Builders<MembersMembership>.Filter.Eq(m => m.MembersMembershipId, id);
+            var membersMembership = await _context.MembersMemberships.Find(filter).FirstOrDefaultAsync();
                 
             if (membersMembership == null)
             {
@@ -390,17 +534,23 @@ namespace GymManagmentSystem.Controllers
             }
 
             // Get member details before deleting
-            var memberName = $"{membersMembership.Enquiry?.FirstName} {membersMembership.Enquiry?.LastName}";
-            var planName = membersMembership.MembershipPlan?.PlanName ?? "Unknown Plan";
-            var email = membersMembership.Enquiry?.Email;
+            var enquiryFilter = Builders<Enquiry>.Filter.Eq(e => e.EnquiryId, membersMembership.EnquiryId);
+            var enquiry = await _context.Enquiries.Find(enquiryFilter).FirstOrDefaultAsync();
+
+            var planFilter = Builders<MembershipPlan>.Filter.Eq(p => p.MembershipPlanId, membersMembership.MembershipPlanId);
+            var plan = await _context.MembershipPlans.Find(planFilter).FirstOrDefaultAsync();
+
+            var memberName = $"{enquiry?.FirstName} {enquiry?.LastName}";
+            var planName = plan?.PlanName ?? "Unknown Plan";
+            var email = enquiry?.Email;
 
             // Delete the membership
-            _context.MembersMemberships.Remove(membersMembership);
-            await _context.SaveChangesAsync();
+            await _context.MembersMemberships.DeleteOneAsync(filter);
 
             // Log the deletion activity
             var activity = new Activity
             {
+                ActivityId = _context.GetNextSequenceValue("Activities"),
                 ActivityType = "MembershipDeleted",
                 Description = $"Membership deleted for {memberName} - Plan: {planName}",
                 EntityType = "Member",
@@ -412,8 +562,7 @@ namespace GymManagmentSystem.Controllers
                 PerformedBy = User?.Identity?.Name ?? "System",
                 CreatedAt = DateTime.UtcNow
             };
-            _context.Activities.Add(activity);
-            await _context.SaveChangesAsync();
+            await _context.Activities.InsertOneAsync(activity);
 
             return NoContent();
         }
@@ -425,29 +574,41 @@ namespace GymManagmentSystem.Controllers
             var currentDate = DateTime.UtcNow;
             var thirtyDaysFromNow = currentDate.AddDays(30);
 
+            var allMemberships = await _context.MembersMemberships.Find(_ => true).ToListAsync();
+
             var stats = new MembershipStats
             {
-                TotalMemberships = await _context.MembersMemberships.CountAsync(),
-                ActiveMemberships = await _context.MembersMemberships.CountAsync(mm => mm.IsActive),
-                ExpiredMemberships = await _context.MembersMemberships.CountAsync(mm => mm.EndDate < currentDate),
-                ExpiringSoon = await _context.MembersMemberships.CountAsync(mm => mm.EndDate >= currentDate && mm.EndDate <= thirtyDaysFromNow),
-                PendingPayments = await _context.MembersMemberships.CountAsync(mm => mm.RemainingAmount > 0),
-                TotalRevenue = await _context.MembersMemberships.SumAsync(mm => mm.PaidAmount),
-                OutstandingAmount = await _context.MembersMemberships.SumAsync(mm => mm.RemainingAmount)
+                TotalMemberships = allMemberships.Count,
+                ActiveMemberships = allMemberships.Count(mm => mm.IsActive),
+                ExpiredMemberships = allMemberships.Count(mm => mm.EndDate < currentDate),
+                ExpiringSoon = allMemberships.Count(mm => mm.EndDate >= currentDate && mm.EndDate <= thirtyDaysFromNow),
+                PendingPayments = allMemberships.Count(mm => mm.RemainingAmount > 0),
+                TotalRevenue = allMemberships.Sum(mm => mm.PaidAmount),
+                OutstandingAmount = allMemberships.Sum(mm => mm.RemainingAmount)
             };
 
-            return stats;
+            return Ok(stats);
         }
 
         // GET: api/MembersMembership/ExportToExcel
         [HttpGet("ExportToExcel")]
         public async Task<IActionResult> ExportToExcel()
         {
-            var memberships = await _context.MembersMemberships
-                .Include(mm => mm.Enquiry)
-                .Include(mm => mm.MembershipPlan)
-                .OrderByDescending(mm => mm.CreatedAt)
-                .ToListAsync();
+            var sort = Builders<MembersMembership>.Sort.Descending(mm => mm.CreatedAt);
+            var memberships = await _context.MembersMemberships.Find(_ => true).Sort(sort).ToListAsync();
+
+            // Load related data
+            var membershipData = new List<(MembersMembership membership, Enquiry enquiry, MembershipPlan plan)>();
+            foreach (var membership in memberships)
+            {
+                var enquiryFilter = Builders<Enquiry>.Filter.Eq(e => e.EnquiryId, membership.EnquiryId);
+                var enquiry = await _context.Enquiries.Find(enquiryFilter).FirstOrDefaultAsync();
+
+                var planFilter = Builders<MembershipPlan>.Filter.Eq(p => p.MembershipPlanId, membership.MembershipPlanId);
+                var plan = await _context.MembershipPlans.Find(planFilter).FirstOrDefaultAsync();
+
+                membershipData.Add((membership, enquiry, plan));
+            }
 
             // Set EPPlus license context
             ExcelPackage.LicenseContext = LicenseContext.NonCommercial;
@@ -484,7 +645,7 @@ namespace GymManagmentSystem.Controllers
 
                 // Add data
                 int row = 2;
-                foreach (var membership in memberships)
+                foreach (var (membership, enquiry, plan) in membershipData)
                 {
                     var currentDate = DateTime.UtcNow;
                     var isExpired = membership.EndDate < currentDate;
@@ -496,11 +657,11 @@ namespace GymManagmentSystem.Controllers
                                        "Unpaid";
 
                     worksheet.Cells[row, 1].Value = membership.MembersMembershipId;
-                    worksheet.Cells[row, 2].Value = $"{membership.Enquiry?.FirstName} {membership.Enquiry?.LastName}";
-                    worksheet.Cells[row, 3].Value = membership.Enquiry?.Email;
-                    worksheet.Cells[row, 4].Value = membership.Enquiry?.Phone;
-                    worksheet.Cells[row, 5].Value = membership.MembershipPlan?.PlanName;
-                    worksheet.Cells[row, 6].Value = membership.MembershipPlan?.DurationInMonths;
+                    worksheet.Cells[row, 2].Value = $"{enquiry?.FirstName} {enquiry?.LastName}";
+                    worksheet.Cells[row, 3].Value = enquiry?.Email;
+                    worksheet.Cells[row, 4].Value = enquiry?.Phone;
+                    worksheet.Cells[row, 5].Value = plan?.PlanName;
+                    worksheet.Cells[row, 6].Value = membership.DurationInMonths;
                     worksheet.Cells[row, 7].Value = membership.StartDate.ToString("yyyy-MM-dd");
                     worksheet.Cells[row, 8].Value = membership.EndDate.ToString("yyyy-MM-dd");
                     worksheet.Cells[row, 9].Value = membership.TotalAmount;
@@ -531,12 +692,10 @@ namespace GymManagmentSystem.Controllers
 
         // PUT: api/MembersMembership/5/ToggleStatus
         [HttpPut("{id}/ToggleStatus")]
-        public async Task<ActionResult<MembersMembership>> ToggleMembershipStatus(int id, [FromBody] ToggleStatusRequest request)
+        public async Task<ActionResult<object>> ToggleMembershipStatus(int id, [FromBody] ToggleStatusRequest request)
         {
-            var membership = await _context.MembersMemberships
-                .Include(m => m.Enquiry)
-                .Include(m => m.MembershipPlan)
-                .FirstOrDefaultAsync(m => m.MembersMembershipId == id);
+            var filter = Builders<MembersMembership>.Filter.Eq(m => m.MembersMembershipId, id);
+            var membership = await _context.MembersMemberships.Find(filter).FirstOrDefaultAsync();
 
             if (membership == null) return NotFound();
 
@@ -544,35 +703,34 @@ namespace GymManagmentSystem.Controllers
             membership.UpdatedAt = DateTime.UtcNow;
             membership.UpdatedBy = request.UpdatedBy;
 
-            await _context.SaveChangesAsync();
+            await _context.MembersMemberships.ReplaceOneAsync(filter, membership);
+
+            // Get enquiry for logging
+            var enquiryFilter = Builders<Enquiry>.Filter.Eq(e => e.EnquiryId, membership.EnquiryId);
+            var enquiry = await _context.Enquiries.Find(enquiryFilter).FirstOrDefaultAsync();
 
             // Log activity
-            var memberName = $"{membership.Enquiry?.FirstName} {membership.Enquiry?.LastName}";
+            var memberName = $"{enquiry?.FirstName} {enquiry?.LastName}";
             var activity = new Activity
             {
+                ActivityId = _context.GetNextSequenceValue("Activities"),
                 ActivityType = request.IsInactive ? "MembershipDeactivated" : "MembershipActivated",
                 Description = $"Membership {(request.IsInactive ? "deactivated" : "activated")} for {memberName}",
                 EntityType = "Member",
                 EntityId = id,
                 RecipientName = memberName,
-                RecipientContact = membership.Enquiry?.Email,
+                RecipientContact = enquiry?.Email,
                 MessageContent = $"Status changed to: {(request.IsInactive ? "Inactive" : "Active")}",
                 IsSuccessful = true,
                 PerformedBy = request.UpdatedBy,
                 CreatedAt = DateTime.UtcNow
             };
-            _context.Activities.Add(activity);
-            await _context.SaveChangesAsync();
+            await _context.Activities.InsertOneAsync(activity);
 
             return Ok(new { 
                 message = $"Membership {(request.IsInactive ? "deactivated" : "activated")} successfully", 
                 membership = membership 
             });
-        }
-
-        private bool MembersMembershipExists(int id)
-        {
-            return _context.MembersMemberships.Any(e => e.MembersMembershipId == id);
         }
     }
 

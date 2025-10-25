@@ -1,10 +1,10 @@
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
 using GymManagmentSystem.Data;
 using GymManagmentSystem.Models;
 using GymManagmentSystem.Models.Enums;
 using GymManagmentSystem.Services;
 using OfficeOpenXml;
+using MongoDB.Driver;
 
 namespace GymManagmentSystem.Controllers
 {
@@ -12,11 +12,11 @@ namespace GymManagmentSystem.Controllers
     [Route("api/[controller]")]
     public class EnquiryController : ControllerBase
     {
-        private readonly AppDbContext _context;
+        private readonly MongoDbContext _context;
         private readonly NotificationService _notificationService;
         private readonly PdfReceiptService _pdfService;
 
-        public EnquiryController(AppDbContext context, NotificationService notificationService, PdfReceiptService pdfService)
+        public EnquiryController(MongoDbContext context, NotificationService notificationService, PdfReceiptService pdfService)
         {
             _context = context;
             _notificationService = notificationService;
@@ -27,41 +27,43 @@ namespace GymManagmentSystem.Controllers
         [HttpGet]
         public async Task<ActionResult<IEnumerable<Enquiry>>> GetEnquiries()
         {
-            return await _context.Enquiries.ToListAsync();
+            var enquiries = await _context.Enquiries.Find(_ => true).ToListAsync();
+            return Ok(enquiries);
         }
 
         // GET: api/Enquiry/Open
         [HttpGet("Open")]
         public async Task<ActionResult<IEnumerable<Enquiry>>> GetOpenEnquiries()
         {
-            return await _context.Enquiries
-                .Where(e => !e.IsConverted)
-                .OrderByDescending(e => e.CreatedAt)
-                .ToListAsync();
+            var filter = Builders<Enquiry>.Filter.Eq(e => e.IsConverted, false);
+            var sort = Builders<Enquiry>.Sort.Descending(e => e.CreatedAt);
+            var enquiries = await _context.Enquiries.Find(filter).Sort(sort).ToListAsync();
+            return Ok(enquiries);
         }
 
         // GET: api/Enquiry/Closed
         [HttpGet("Closed")]
         public async Task<ActionResult<IEnumerable<Enquiry>>> GetClosedEnquiries()
         {
-            return await _context.Enquiries
-                .Where(e => e.IsConverted)
-                .OrderByDescending(e => e.ConvertedDate)
-                .ToListAsync();
+            var filter = Builders<Enquiry>.Filter.Eq(e => e.IsConverted, true);
+            var sort = Builders<Enquiry>.Sort.Descending(e => e.ConvertedDate);
+            var enquiries = await _context.Enquiries.Find(filter).Sort(sort).ToListAsync();
+            return Ok(enquiries);
         }
 
         // GET: api/Enquiry/5
         [HttpGet("{id}")]
         public async Task<ActionResult<Enquiry>> GetEnquiry(int id)
         {
-            var enquiry = await _context.Enquiries.FindAsync(id);
+            var filter = Builders<Enquiry>.Filter.Eq(e => e.EnquiryId, id);
+            var enquiry = await _context.Enquiries.Find(filter).FirstOrDefaultAsync();
 
             if (enquiry == null)
             {
                 return NotFound();
             }
 
-            return enquiry;
+            return Ok(enquiry);
         }
 
         // POST: api/Enquiry
@@ -69,27 +71,31 @@ namespace GymManagmentSystem.Controllers
         public async Task<ActionResult<Enquiry>> PostEnquiry(Enquiry enquiry)
         {
             // Check for duplicate email
-            if (await _context.Enquiries.AnyAsync(e => e.Email == enquiry.Email))
+            var emailFilter = Builders<Enquiry>.Filter.Eq(e => e.Email, enquiry.Email);
+            var emailCount = await _context.Enquiries.CountDocumentsAsync(emailFilter);
+            if (emailCount > 0)
             {
                 return BadRequest(new { message = $"Email '{enquiry.Email}' is already registered" });
             }
 
             // Check for duplicate phone
-            if (await _context.Enquiries.AnyAsync(e => e.Phone == enquiry.Phone))
+            var phoneFilter = Builders<Enquiry>.Filter.Eq(e => e.Phone, enquiry.Phone);
+            var phoneCount = await _context.Enquiries.CountDocumentsAsync(phoneFilter);
+            if (phoneCount > 0)
             {
                 return BadRequest(new { message = $"Phone number '{enquiry.Phone}' is already registered" });
             }
 
+            // Generate sequential ID
+            enquiry.EnquiryId = _context.GetNextSequenceValue("Enquiries");
             enquiry.CreatedAt = DateTime.UtcNow;
             enquiry.UpdatedAt = DateTime.UtcNow;
             
-            _context.Enquiries.Add(enquiry);
-            
             try
             {
-                await _context.SaveChangesAsync();
+                await _context.Enquiries.InsertOneAsync(enquiry);
             }
-            catch (DbUpdateException)
+            catch (MongoWriteException)
             {
                 // Handle unique constraint violation
                 return BadRequest(new { message = "This email or phone number is already in use" });
@@ -111,39 +117,43 @@ namespace GymManagmentSystem.Controllers
             }
 
             // Check for duplicate email (excluding current record)
-            if (await _context.Enquiries.AnyAsync(e => e.Email == enquiry.Email && e.EnquiryId != id))
+            var emailFilter = Builders<Enquiry>.Filter.And(
+                Builders<Enquiry>.Filter.Eq(e => e.Email, enquiry.Email),
+                Builders<Enquiry>.Filter.Ne(e => e.EnquiryId, id)
+            );
+            var emailCount = await _context.Enquiries.CountDocumentsAsync(emailFilter);
+            if (emailCount > 0)
             {
                 return BadRequest(new { message = $"Email '{enquiry.Email}' is already registered" });
             }
 
             // Check for duplicate phone (excluding current record)
-            if (await _context.Enquiries.AnyAsync(e => e.Phone == enquiry.Phone && e.EnquiryId != id))
+            var phoneFilter = Builders<Enquiry>.Filter.And(
+                Builders<Enquiry>.Filter.Eq(e => e.Phone, enquiry.Phone),
+                Builders<Enquiry>.Filter.Ne(e => e.EnquiryId, id)
+            );
+            var phoneCount = await _context.Enquiries.CountDocumentsAsync(phoneFilter);
+            if (phoneCount > 0)
             {
                 return BadRequest(new { message = $"Phone number '{enquiry.Phone}' is already registered" });
             }
 
             enquiry.UpdatedAt = DateTime.UtcNow;
-            _context.Entry(enquiry).State = EntityState.Modified;
-
+            
             try
             {
-                await _context.SaveChangesAsync();
+                var filter = Builders<Enquiry>.Filter.Eq(e => e.EnquiryId, id);
+                var result = await _context.Enquiries.ReplaceOneAsync(filter, enquiry);
+                
+                if (result.MatchedCount == 0)
+                {
+                    return NotFound();
+                }
                 
                 // Create history record
                 await CreateEnquiryHistory(enquiry, EnquiryAction.Updated);
             }
-            catch (DbUpdateConcurrencyException)
-            {
-                if (!EnquiryExists(id))
-                {
-                    return NotFound();
-                }
-                else
-                {
-                    throw;
-                }
-            }
-            catch (DbUpdateException)
+            catch (MongoWriteException)
             {
                 return BadRequest(new { message = "This email or phone number is already in use" });
             }
@@ -155,28 +165,30 @@ namespace GymManagmentSystem.Controllers
         [HttpDelete("{id}")]
         public async Task<IActionResult> DeleteEnquiry(int id)
         {
-            var enquiry = await _context.Enquiries.FindAsync(id);
+            var filter = Builders<Enquiry>.Filter.Eq(e => e.EnquiryId, id);
+            var enquiry = await _context.Enquiries.Find(filter).FirstOrDefaultAsync();
+            
             if (enquiry == null)
             {
                 return NotFound();
             }
 
             // Check if enquiry has been converted to member
-            var hasMembership = await _context.MembersMemberships.AnyAsync(m => m.EnquiryId == id);
+            var membershipFilter = Builders<MembersMembership>.Filter.Eq(m => m.EnquiryId, id);
+            var hasMembership = await _context.MembersMemberships.CountDocumentsAsync(membershipFilter) > 0;
             if (hasMembership)
             {
                 return BadRequest(new { message = "Cannot delete enquiry that has been converted to member. Delete the membership first." });
             }
 
             // Delete related history records first
-            var historyRecords = await _context.EnquiryHistories.Where(h => h.EnquiryId == id).ToListAsync();
-            _context.EnquiryHistories.RemoveRange(historyRecords);
+            var historyFilter = Builders<EnquiryHistory>.Filter.Eq(h => h.EnquiryId, id);
+            await _context.EnquiryHistories.DeleteManyAsync(historyFilter);
 
             // Create final history record before deletion
             await CreateEnquiryHistory(enquiry, EnquiryAction.Deleted);
 
-            _context.Enquiries.Remove(enquiry);
-            await _context.SaveChangesAsync();
+            await _context.Enquiries.DeleteOneAsync(filter);
 
             return NoContent();
         }
@@ -185,7 +197,9 @@ namespace GymManagmentSystem.Controllers
         [HttpPost("{id}/ConvertToMember")]
         public async Task<ActionResult<MembersMembership>> ConvertToMember(int id, [FromBody] ConvertToMemberRequest request)
         {
-            var enquiry = await _context.Enquiries.FindAsync(id);
+            var enquiryFilter = Builders<Enquiry>.Filter.Eq(e => e.EnquiryId, id);
+            var enquiry = await _context.Enquiries.Find(enquiryFilter).FirstOrDefaultAsync();
+            
             if (enquiry == null)
             {
                 return NotFound("Enquiry not found");
@@ -198,14 +212,15 @@ namespace GymManagmentSystem.Controllers
             }
 
             // Check if enquiry already has an active membership
-            var existingMembership = await _context.MembersMemberships
-                .AnyAsync(m => m.EnquiryId == id);
+            var membershipFilter = Builders<MembersMembership>.Filter.Eq(m => m.EnquiryId, id);
+            var existingMembership = await _context.MembersMemberships.CountDocumentsAsync(membershipFilter) > 0;
             if (existingMembership)
             {
                 return BadRequest(new { message = "This enquiry already has a membership" });
             }
 
-            var membershipPlan = await _context.MembershipPlans.FindAsync(request.MembershipPlanId);
+            var planFilter = Builders<MembershipPlan>.Filter.Eq(p => p.MembershipPlanId, request.MembershipPlanId);
+            var membershipPlan = await _context.MembershipPlans.Find(planFilter).FirstOrDefaultAsync();
             if (membershipPlan == null)
             {
                 return NotFound("Membership plan not found");
@@ -213,9 +228,11 @@ namespace GymManagmentSystem.Controllers
 
             var membersMembership = new MembersMembership
             {
+                MembersMembershipId = _context.GetNextSequenceValue("MembersMemberships"),
                 EnquiryId = enquiry.EnquiryId,
                 MembershipPlanId = membershipPlan.MembershipPlanId,
                 StartDate = DateTime.UtcNow,
+                DurationInMonths = membershipPlan.DurationInMonths,
                 TotalAmount = membershipPlan.Price,
                 PaidAmount = request.PaidAmount,
                 NextPaymentDueDate = DateTime.UtcNow.AddMonths(1),
@@ -223,7 +240,7 @@ namespace GymManagmentSystem.Controllers
                 CreatedAt = DateTime.UtcNow
             };
 
-            _context.MembersMemberships.Add(membersMembership);
+            await _context.MembersMemberships.InsertOneAsync(membersMembership);
             
             // Mark enquiry as converted
             enquiry.IsConverted = true;
@@ -231,10 +248,11 @@ namespace GymManagmentSystem.Controllers
             enquiry.UpdatedAt = DateTime.UtcNow;
             enquiry.UpdatedBy = request.CreatedBy;
             
+            var updateFilter = Builders<Enquiry>.Filter.Eq(e => e.EnquiryId, id);
+            await _context.Enquiries.ReplaceOneAsync(updateFilter, enquiry);
+            
             // Update enquiry history
             await CreateEnquiryHistory(enquiry, EnquiryAction.MembershipTaken, DateTime.UtcNow);
-
-            await _context.SaveChangesAsync();
 
             // Send welcome email and WhatsApp greeting
             var memberName = $"{enquiry.FirstName} {enquiry.LastName}";
@@ -243,6 +261,7 @@ namespace GymManagmentSystem.Controllers
             // Log conversion activity
             var conversionActivity = new Activity
             {
+                ActivityId = _context.GetNextSequenceValue("Activities"),
                 ActivityType = "EnquiryConverted",
                 Description = $"Enquiry converted to member: {memberName}",
                 EntityType = "Enquiry",
@@ -254,17 +273,19 @@ namespace GymManagmentSystem.Controllers
                 PerformedBy = request.CreatedBy ?? "System",
                 CreatedAt = DateTime.UtcNow
             };
-            _context.Activities.Add(conversionActivity);
+            await _context.Activities.InsertOneAsync(conversionActivity);
             
             // Create payment receipt for initial payment if any amount was paid
             PaymentReceipt receipt = null;
             if (request.PaidAmount > 0)
             {
-                var receiptCount = await _context.PaymentReceipts.CountAsync();
+                var receiptCount = await _context.PaymentReceipts.CountDocumentsAsync(_ => true);
                 var receiptNumber = $"REC-{DateTime.UtcNow:yyyy}-{(receiptCount + 1):D5}";
+                var paymentReceiptId = _context.GetNextSequenceValue("PaymentReceipts");
 
                 receipt = new PaymentReceipt
                 {
+                    PaymentReceiptId = paymentReceiptId,
                     ReceiptNumber = receiptNumber,
                     MembersMembershipId = membersMembership.MembersMembershipId,
                     AmountPaid = request.PaidAmount,
@@ -283,18 +304,17 @@ namespace GymManagmentSystem.Controllers
                     CreatedAt = DateTime.UtcNow,
                     EmailSent = false
                 };
-                _context.PaymentReceipts.Add(receipt);
-                
-                // Must save to get the PaymentReceiptId before generating HTML
-                await _context.SaveChangesAsync();
+                await _context.PaymentReceipts.InsertOneAsync(receipt);
                 
                 // Generate and save HTML content to database
                 receipt.HtmlContent = _pdfService.GenerateReceiptHtmlContent(receipt);
-                _context.PaymentReceipts.Update(receipt);
+                var receiptFilter = Builders<PaymentReceipt>.Filter.Eq(r => r.PaymentReceiptId, paymentReceiptId);
+                await _context.PaymentReceipts.ReplaceOneAsync(receiptFilter, receipt);
                 
                 // Log initial payment activity
                 var paymentActivity = new Activity
                 {
+                    ActivityId = _context.GetNextSequenceValue("Activities"),
                     ActivityType = "PaymentReceived",
                     Description = $"Initial payment of ${request.PaidAmount:N2} received from {memberName}",
                     EntityType = "Member",
@@ -306,10 +326,8 @@ namespace GymManagmentSystem.Controllers
                     PerformedBy = request.CreatedBy ?? "System",
                     CreatedAt = DateTime.UtcNow
                 };
-                _context.Activities.Add(paymentActivity);
+                await _context.Activities.InsertOneAsync(paymentActivity);
             }
-            
-            await _context.SaveChangesAsync();
             
             // Send notifications (async, don't wait - don't block response)
             _ = Task.Run(async () =>
@@ -346,7 +364,8 @@ namespace GymManagmentSystem.Controllers
                         // Update receipt to mark email as sent
                         receipt.EmailSent = true;
                         receipt.EmailSentAt = DateTime.UtcNow;
-                        await _context.SaveChangesAsync();
+                        var receiptFilter = Builders<PaymentReceipt>.Filter.Eq(r => r.PaymentReceiptId, receipt.PaymentReceiptId);
+                        await _context.PaymentReceipts.ReplaceOneAsync(receiptFilter, receipt);
                     }
                     catch (Exception ex)
                     {
@@ -361,21 +380,33 @@ namespace GymManagmentSystem.Controllers
 
         // GET: api/Enquiry/5/History
         [HttpGet("{id}/History")]
-        public async Task<ActionResult<IEnumerable<EnquiryHistory>>> GetEnquiryHistory(int id)
+        public async Task<ActionResult<IEnumerable<object>>> GetEnquiryHistory(int id)
         {
-            var history = await _context.EnquiryHistories
-                .Where(eh => eh.EnquiryId == id)
-                .OrderByDescending(eh => eh.ModifiedAt)
-                .ToListAsync();
+            var filter = Builders<EnquiryHistory>.Filter.Eq(eh => eh.EnquiryId, id);
+            var sort = Builders<EnquiryHistory>.Sort.Descending(eh => eh.ModifiedAt);
+            var history = await _context.EnquiryHistories.Find(filter).Sort(sort).ToListAsync();
 
-            return history;
+            // Convert to response format matching frontend expectations
+            var response = history.Select(h => new
+            {
+                enquiryHistoryId = h.HistoryId,
+                enquiryId = h.EnquiryId,
+                action = h.ActionTaken.ToString(),
+                modifiedBy = h.ModifiedBy,
+                modifiedAt = h.ModifiedAt,
+                notes = h.ActionTaken == EnquiryAction.MembershipTaken 
+                    ? $"Converted to membership on {h.MembershipTakenDate:yyyy-MM-dd}"
+                    : h.ActionTaken.ToString()
+            });
+
+            return Ok(response);
         }
 
         // GET: api/Enquiry/ExportToExcel
         [HttpGet("ExportToExcel")]
         public async Task<IActionResult> ExportToExcel()
         {
-            var enquiries = await _context.Enquiries.ToListAsync();
+            var enquiries = await _context.Enquiries.Find(_ => true).ToListAsync();
 
             // Set EPPlus license context
             ExcelPackage.LicenseContext = LicenseContext.NonCommercial;
@@ -438,15 +469,11 @@ namespace GymManagmentSystem.Controllers
             }
         }
 
-        private bool EnquiryExists(int id)
-        {
-            return _context.Enquiries.Any(e => e.EnquiryId == id);
-        }
-
         private async Task CreateEnquiryHistory(Enquiry enquiry, EnquiryAction action, DateTime? membershipDate = null)
         {
             var history = new EnquiryHistory
             {
+                HistoryId = _context.GetNextSequenceValue("EnquiryHistories"),
                 EnquiryId = enquiry.EnquiryId,
                 FirstName = enquiry.FirstName,
                 LastName = enquiry.LastName,
@@ -464,8 +491,7 @@ namespace GymManagmentSystem.Controllers
                 ModifiedAt = DateTime.UtcNow
             };
 
-            _context.EnquiryHistories.Add(history);
-            await _context.SaveChangesAsync();
+            await _context.EnquiryHistories.InsertOneAsync(history);
         }
     }
 

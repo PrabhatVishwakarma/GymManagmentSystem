@@ -2,16 +2,52 @@ using GymManagmentSystem.Models;
 using GymManagmentSystem.Data;
 using GymManagmentSystem.Services;
 using Microsoft.AspNetCore.Identity;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 using System.Text;
+using AspNetCore.Identity.MongoDbCore.Infrastructure;
+using AspNetCore.Identity.MongoDbCore.Extensions;
+using MongoDB.Bson.Serialization;
+using MongoDB.Bson.Serialization.Serializers;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Add services to the container.
-builder.Services.AddDbContext<AppDbContext>(options => options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
-builder.Services.AddIdentity<User, IdentityRole>().AddEntityFrameworkStores<AppDbContext>().AddDefaultTokenProviders();
+// Configure MongoDB Bson Serializers
+BsonSerializer.RegisterSerializer(new GuidSerializer(MongoDB.Bson.BsonType.String));
+BsonSerializer.RegisterSerializer(new DateTimeSerializer(MongoDB.Bson.BsonType.String));
+BsonSerializer.RegisterSerializer(new DateTimeOffsetSerializer(MongoDB.Bson.BsonType.String));
+
+// Add MongoDB context
+builder.Services.AddSingleton<MongoDbContext>();
+
+// Configure MongoDB Identity
+var mongoDbConfig = new MongoDbIdentityConfiguration
+{
+    MongoDbSettings = new MongoDbSettings
+    {
+        ConnectionString = builder.Configuration.GetValue<string>("MongoDB:ConnectionString"),
+        DatabaseName = builder.Configuration.GetValue<string>("MongoDB:DatabaseName")
+    },
+    IdentityOptionsAction = options =>
+    {
+        options.Password.RequireDigit = true;
+        options.Password.RequiredLength = 6;
+        options.Password.RequireNonAlphanumeric = false;
+        options.Password.RequireUppercase = false;
+        options.Password.RequireLowercase = false;
+        
+        options.User.RequireUniqueEmail = true;
+        
+        options.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(5);
+        options.Lockout.MaxFailedAccessAttempts = 5;
+    }
+};
+
+builder.Services.ConfigureMongoDbIdentity<User, ApplicationRole, string>(mongoDbConfig)
+    .AddUserManager<UserManager<User>>()
+    .AddSignInManager<SignInManager<User>>()
+    .AddRoleManager<RoleManager<ApplicationRole>>()
+    .AddDefaultTokenProviders();
 
 // Configure JWT Authentication
 builder.Services.AddAuthentication(options =>

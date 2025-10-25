@@ -9,9 +9,9 @@ namespace GymManagmentSystem.Services
     {
         private readonly IConfiguration _configuration;
         private readonly ILogger<NotificationService> _logger;
-        private readonly AppDbContext _context;
+        private readonly MongoDbContext _context;
 
-        public NotificationService(IConfiguration configuration, ILogger<NotificationService> logger, AppDbContext context)
+        public NotificationService(IConfiguration configuration, ILogger<NotificationService> logger, MongoDbContext context)
         {
             _configuration = configuration;
             _logger = logger;
@@ -178,6 +178,7 @@ namespace GymManagmentSystem.Services
             {
                 var activity = new Activity
                 {
+                    ActivityId = _context.GetNextSequenceValue("Activities"),
                     ActivityType = activityType,
                     Description = description,
                     EntityType = entityType,
@@ -191,8 +192,7 @@ namespace GymManagmentSystem.Services
                     CreatedAt = DateTime.UtcNow
                 };
                 
-                _context.Activities.Add(activity);
-                await _context.SaveChangesAsync();
+                await _context.Activities.InsertOneAsync(activity);
             }
             catch (Exception ex)
             {

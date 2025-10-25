@@ -1,7 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
 using GymManagmentSystem.Data;
 using GymManagmentSystem.Models;
+using MongoDB.Driver;
 
 namespace GymManagmentSystem.Controllers
 {
@@ -9,9 +9,9 @@ namespace GymManagmentSystem.Controllers
     [Route("api/[controller]")]
     public class ReportsController : ControllerBase
     {
-        private readonly AppDbContext _context;
+        private readonly MongoDbContext _context;
 
-        public ReportsController(AppDbContext context)
+        public ReportsController(MongoDbContext context)
         {
             _context = context;
         }
@@ -23,11 +23,35 @@ namespace GymManagmentSystem.Controllers
             var start = startDate ?? DateTime.UtcNow.AddMonths(-1);
             var end = endDate ?? DateTime.UtcNow;
 
-            var memberships = await _context.MembersMemberships
-                .Include(m => m.Enquiry)
-                .Include(m => m.MembershipPlan)
-                .Where(m => m.CreatedAt >= start && m.CreatedAt <= end)
-                .ToListAsync();
+            // Get memberships in date range
+            var filter = Builders<MembersMembership>.Filter.And(
+                Builders<MembersMembership>.Filter.Gte(m => m.CreatedAt, start),
+                Builders<MembersMembership>.Filter.Lte(m => m.CreatedAt, end)
+            );
+            var memberships = await _context.MembersMemberships.Find(filter).ToListAsync();
+
+            // Load related enquiries and plans
+            var reportItems = new List<SalesReportItem>();
+            foreach (var membership in memberships)
+            {
+                var enquiryFilter = Builders<Enquiry>.Filter.Eq(e => e.EnquiryId, membership.EnquiryId);
+                var enquiry = await _context.Enquiries.Find(enquiryFilter).FirstOrDefaultAsync();
+
+                var planFilter = Builders<MembershipPlan>.Filter.Eq(p => p.MembershipPlanId, membership.MembershipPlanId);
+                var plan = await _context.MembershipPlans.Find(planFilter).FirstOrDefaultAsync();
+
+                reportItems.Add(new SalesReportItem
+                {
+                    MembershipId = membership.MembersMembershipId,
+                    MemberName = $"{enquiry?.FirstName} {enquiry?.LastName}",
+                    Email = enquiry?.Email,
+                    PlanName = plan?.PlanName,
+                    TotalAmount = membership.TotalAmount,
+                    PaidAmount = membership.PaidAmount,
+                    RemainingAmount = membership.RemainingAmount,
+                    Date = membership.CreatedAt
+                });
+            }
 
             var report = new SalesReport
             {
@@ -37,17 +61,7 @@ namespace GymManagmentSystem.Controllers
                 TotalMemberships = memberships.Count,
                 AverageTicket = memberships.Any() ? memberships.Average(m => m.PaidAmount) : 0,
                 PendingAmount = memberships.Sum(m => m.RemainingAmount),
-                Memberships = memberships.Select(m => new SalesReportItem
-                {
-                    MembershipId = m.MembersMembershipId,
-                    MemberName = $"{m.Enquiry.FirstName} {m.Enquiry.LastName}",
-                    Email = m.Enquiry.Email,
-                    PlanName = m.MembershipPlan.PlanName,
-                    TotalAmount = m.TotalAmount,
-                    PaidAmount = m.PaidAmount,
-                    RemainingAmount = m.RemainingAmount,
-                    Date = m.CreatedAt
-                }).ToList()
+                Memberships = reportItems
             };
 
             return Ok(report);
@@ -87,12 +101,26 @@ namespace GymManagmentSystem.Controllers
             var start = startDate ?? DateTime.UtcNow.AddMonths(-1);
             var end = endDate ?? DateTime.UtcNow;
 
-            var memberships = await _context.MembersMemberships
-                .Include(m => m.Enquiry)
-                .Include(m => m.MembershipPlan)
-                .Where(m => m.CreatedAt >= start && m.CreatedAt <= end)
-                .OrderByDescending(m => m.CreatedAt)
-                .ToListAsync();
+            // Get memberships in date range
+            var filter = Builders<MembersMembership>.Filter.And(
+                Builders<MembersMembership>.Filter.Gte(m => m.CreatedAt, start),
+                Builders<MembersMembership>.Filter.Lte(m => m.CreatedAt, end)
+            );
+            var sort = Builders<MembersMembership>.Sort.Descending(m => m.CreatedAt);
+            var memberships = await _context.MembersMemberships.Find(filter).Sort(sort).ToListAsync();
+
+            // Load related data
+            var membershipData = new List<(MembersMembership membership, Enquiry enquiry, MembershipPlan plan)>();
+            foreach (var membership in memberships)
+            {
+                var enquiryFilter = Builders<Enquiry>.Filter.Eq(e => e.EnquiryId, membership.EnquiryId);
+                var enquiry = await _context.Enquiries.Find(enquiryFilter).FirstOrDefaultAsync();
+
+                var planFilter = Builders<MembershipPlan>.Filter.Eq(p => p.MembershipPlanId, membership.MembershipPlanId);
+                var plan = await _context.MembershipPlans.Find(planFilter).FirstOrDefaultAsync();
+
+                membershipData.Add((membership, enquiry, plan));
+            }
 
             // Set EPPlus license context
             OfficeOpenXml.ExcelPackage.LicenseContext = OfficeOpenXml.LicenseContext.NonCommercial;
@@ -131,12 +159,12 @@ namespace GymManagmentSystem.Controllers
 
                 // Add data
                 int row = headerRow + 1;
-                foreach (var membership in memberships)
+                foreach (var (membership, enquiry, plan) in membershipData)
                 {
                     worksheet.Cells[row, 1].Value = membership.CreatedAt.ToString("yyyy-MM-dd");
-                    worksheet.Cells[row, 2].Value = $"{membership.Enquiry?.FirstName} {membership.Enquiry?.LastName}";
-                    worksheet.Cells[row, 3].Value = membership.Enquiry?.Email;
-                    worksheet.Cells[row, 4].Value = membership.MembershipPlan?.PlanName;
+                    worksheet.Cells[row, 2].Value = $"{enquiry?.FirstName} {enquiry?.LastName}";
+                    worksheet.Cells[row, 3].Value = enquiry?.Email;
+                    worksheet.Cells[row, 4].Value = plan?.PlanName;
                     worksheet.Cells[row, 5].Value = membership.TotalAmount;
                     worksheet.Cells[row, 6].Value = membership.PaidAmount;
                     worksheet.Cells[row, 7].Value = membership.RemainingAmount;
@@ -190,4 +218,3 @@ namespace GymManagmentSystem.Controllers
         public DateTime Date { get; set; }
     }
 }
-

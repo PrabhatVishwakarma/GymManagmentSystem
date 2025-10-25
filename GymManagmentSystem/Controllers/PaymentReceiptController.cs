@@ -1,10 +1,10 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
 using GymManagmentSystem.Data;
 using GymManagmentSystem.Models;
 using GymManagmentSystem.Services;
 using System.Security.Claims;
+using MongoDB.Driver;
 
 namespace GymManagmentSystem.Controllers
 {
@@ -13,10 +13,10 @@ namespace GymManagmentSystem.Controllers
     [ApiController]
     public class PaymentReceiptController : ControllerBase
     {
-        private readonly AppDbContext _context;
+        private readonly MongoDbContext _context;
         private readonly PdfReceiptService _pdfService;
 
-        public PaymentReceiptController(AppDbContext context, PdfReceiptService pdfService)
+        public PaymentReceiptController(MongoDbContext context, PdfReceiptService pdfService)
         {
             _context = context;
             _pdfService = pdfService;
@@ -33,10 +33,9 @@ namespace GymManagmentSystem.Controllers
         [HttpGet("member/{membershipId}")]
         public async Task<ActionResult<IEnumerable<PaymentReceipt>>> GetMemberReceipts(int membershipId)
         {
-            var receipts = await _context.PaymentReceipts
-                .Where(r => r.MembersMembershipId == membershipId)
-                .OrderByDescending(r => r.PaymentDate)
-                .ToListAsync();
+            var filter = Builders<PaymentReceipt>.Filter.Eq(r => r.MembersMembershipId, membershipId);
+            var sort = Builders<PaymentReceipt>.Sort.Descending(r => r.PaymentDate);
+            var receipts = await _context.PaymentReceipts.Find(filter).Sort(sort).ToListAsync();
 
             return Ok(receipts);
         }
@@ -45,7 +44,8 @@ namespace GymManagmentSystem.Controllers
         [HttpGet("{id}")]
         public async Task<ActionResult<PaymentReceipt>> GetReceipt(int id)
         {
-            var receipt = await _context.PaymentReceipts.FindAsync(id);
+            var filter = Builders<PaymentReceipt>.Filter.Eq(r => r.PaymentReceiptId, id);
+            var receipt = await _context.PaymentReceipts.Find(filter).FirstOrDefaultAsync();
 
             if (receipt == null)
             {
@@ -59,7 +59,8 @@ namespace GymManagmentSystem.Controllers
         [HttpGet("{id}/download")]
         public async Task<IActionResult> DownloadReceipt(int id)
         {
-            var receipt = await _context.PaymentReceipts.FindAsync(id);
+            var filter = Builders<PaymentReceipt>.Filter.Eq(r => r.PaymentReceiptId, id);
+            var receipt = await _context.PaymentReceipts.Find(filter).FirstOrDefaultAsync();
 
             if (receipt == null)
             {
@@ -80,6 +81,7 @@ namespace GymManagmentSystem.Controllers
                 // Log download activity
                 var activity = new Activity
                 {
+                    ActivityId = _context.GetNextSequenceValue("Activities"),
                     ActivityType = "ReceiptDownloaded",
                     Description = $"Downloaded payment receipt {receipt.ReceiptNumber} for {receipt.MemberName} (₹{receipt.AmountPaid:N2})",
                     EntityType = "PaymentReceipt",
@@ -91,8 +93,7 @@ namespace GymManagmentSystem.Controllers
                     RecipientName = receipt.MemberName,
                     RecipientContact = receipt.MemberEmail
                 };
-                _context.Activities.Add(activity);
-                await _context.SaveChangesAsync();
+                await _context.Activities.InsertOneAsync(activity);
                 
                 return File(pdfBytes, "application/pdf", $"Receipt_{receipt.ReceiptNumber}.pdf");
             }
@@ -118,6 +119,7 @@ namespace GymManagmentSystem.Controllers
                 // Log download activity (HTML fallback)
                 var activity = new Activity
                 {
+                    ActivityId = _context.GetNextSequenceValue("Activities"),
                     ActivityType = "ReceiptDownloaded",
                     Description = $"Downloaded payment receipt {receipt.ReceiptNumber} for {receipt.MemberName} (₹{receipt.AmountPaid:N2}) - HTML fallback",
                     EntityType = "PaymentReceipt",
@@ -130,8 +132,7 @@ namespace GymManagmentSystem.Controllers
                     RecipientContact = receipt.MemberEmail,
                     ErrorMessage = ex.Message
                 };
-                _context.Activities.Add(activity);
-                await _context.SaveChangesAsync();
+                await _context.Activities.InsertOneAsync(activity);
                 
                 var htmlBytes = System.Text.Encoding.UTF8.GetBytes(htmlContent);
                 return File(htmlBytes, "text/html", $"Receipt_{receipt.ReceiptNumber}.html");
@@ -142,7 +143,8 @@ namespace GymManagmentSystem.Controllers
         [HttpGet("{id}/html")]
         public async Task<IActionResult> GetReceiptHtml(int id)
         {
-            var receipt = await _context.PaymentReceipts.FindAsync(id);
+            var filter = Builders<PaymentReceipt>.Filter.Eq(r => r.PaymentReceiptId, id);
+            var receipt = await _context.PaymentReceipts.Find(filter).FirstOrDefaultAsync();
 
             if (receipt == null)
             {
@@ -159,13 +161,14 @@ namespace GymManagmentSystem.Controllers
                 
                 // Save generated HTML for future use
                 receipt.HtmlContent = htmlContent;
-                _context.PaymentReceipts.Update(receipt);
-                await _context.SaveChangesAsync();
+                var updateFilter = Builders<PaymentReceipt>.Filter.Eq(r => r.PaymentReceiptId, id);
+                await _context.PaymentReceipts.ReplaceOneAsync(updateFilter, receipt);
             }
             
             // Log view activity
             var activity = new Activity
             {
+                ActivityId = _context.GetNextSequenceValue("Activities"),
                 ActivityType = "ReceiptViewed",
                 Description = $"Viewed payment receipt {receipt.ReceiptNumber} for {receipt.MemberName} (₹{receipt.AmountPaid:N2})",
                 EntityType = "PaymentReceipt",
@@ -177,8 +180,7 @@ namespace GymManagmentSystem.Controllers
                 RecipientName = receipt.MemberName,
                 RecipientContact = receipt.MemberEmail
             };
-            _context.Activities.Add(activity);
-            await _context.SaveChangesAsync();
+            await _context.Activities.InsertOneAsync(activity);
             
             return Content(htmlContent, "text/html");
         }
@@ -187,9 +189,8 @@ namespace GymManagmentSystem.Controllers
         [HttpGet("all")]
         public async Task<ActionResult<IEnumerable<PaymentReceipt>>> GetAllReceipts()
         {
-            var receipts = await _context.PaymentReceipts
-                .OrderByDescending(r => r.PaymentDate)
-                .ToListAsync();
+            var sort = Builders<PaymentReceipt>.Sort.Descending(r => r.PaymentDate);
+            var receipts = await _context.PaymentReceipts.Find(_ => true).Sort(sort).ToListAsync();
 
             return Ok(receipts);
         }
@@ -199,17 +200,15 @@ namespace GymManagmentSystem.Controllers
         [Authorize(Roles = "Admin")]
         public async Task<IActionResult> DeleteReceipt(int id)
         {
-            var receipt = await _context.PaymentReceipts.FindAsync(id);
-            if (receipt == null)
+            var filter = Builders<PaymentReceipt>.Filter.Eq(r => r.PaymentReceiptId, id);
+            var result = await _context.PaymentReceipts.DeleteOneAsync(filter);
+            
+            if (result.DeletedCount == 0)
             {
                 return NotFound();
             }
-
-            _context.PaymentReceipts.Remove(receipt);
-            await _context.SaveChangesAsync();
 
             return NoContent();
         }
     }
 }
-
